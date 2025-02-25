@@ -984,17 +984,37 @@ class Mind:
         """Process input data from the environment.
         
         Args:
-            input_data: Dictionary of input data
+            input_data: Dictionary of input data containing sensory information
         """
-        # Route input to appropriate networks based on type
-        if "visual" in input_data and "perception" in self.networks:
-            visual_data = torch.tensor(input_data["visual"], dtype=torch.float32)
-            self.networks["perception"].experiential_learning(visual_data)
+        # Process perception inputs (visual and auditory)
+        if "perception" in self.networks:
+            # Check if we have any perception-related data
+            has_perception_data = "visual" in input_data or "auditory" in input_data
             
-        if "auditory" in input_data and "perception" in self.networks:
-            auditory_data = torch.tensor(input_data["auditory"], dtype=torch.float32)
-            self.networks["perception"].experiential_learning(auditory_data)
-            
+            if has_perception_data:
+                # Prepare properly sized tensors for both modalities
+                visual_data = input_data.get("visual", [0.0] * 64)  # Default to zeros if missing
+                auditory_data = input_data.get("auditory", [0.0] * 64)  # Default to zeros if missing
+                
+                # Ensure proper length for visual data
+                if isinstance(visual_data, list):
+                    if len(visual_data) > 64:
+                        visual_data = visual_data[:64]
+                    elif len(visual_data) < 64:
+                        visual_data = visual_data + [0.0] * (64 - len(visual_data))
+                
+                # Ensure proper length for auditory data
+                if isinstance(auditory_data, list):
+                    if len(auditory_data) > 64:
+                        auditory_data = auditory_data[:64]
+                    elif len(auditory_data) < 64:
+                        auditory_data = auditory_data + [0.0] * (64 - len(auditory_data))
+                
+                # Combine into a single tensor for perception network
+                combined_data = torch.tensor(visual_data + auditory_data, dtype=torch.float32)
+                self.networks["perception"].experiential_learning(combined_data)
+        
+        # Process language input
         if "language" in input_data and "language" in self.networks:
             # Process language input - helps with language acquisition
             language_data = input_data["language"]
@@ -1017,10 +1037,10 @@ class Mind:
                     
                     if "language" in self.networks:
                         self.networks["language"].experiential_learning(tensor_data)
-            
-        # Form a memory of this input
+        
+        # Form a memory of this input regardless of type
         self._form_memory({
-            "type": "sensory_input",
+            "type": input_data.get("type", "sensory_input"),
             "data": input_data,
             "time": datetime.now().isoformat()
         })
