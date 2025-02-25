@@ -2244,10 +2244,19 @@ class Mind:
                 json.dump(mind_state, f, indent=2)
                 
             # Save memories
+            def memory_to_dict(memory):
+                memory_dict = memory.dict()
+                # Convert datetime objects to ISO format strings
+                if "creation_time" in memory_dict and isinstance(memory_dict["creation_time"], datetime):
+                    memory_dict["creation_time"] = memory_dict["creation_time"].isoformat()
+                if "last_access_time" in memory_dict and isinstance(memory_dict["last_access_time"], datetime):
+                    memory_dict["last_access_time"] = memory_dict["last_access_time"].isoformat()
+                return memory_dict
+                
             memories_data = {
-                "short_term": [memory.dict() for memory in self.short_term_memory],
-                "long_term": [memory.dict() for memory in self.long_term_memory],
-                "clusters": {cluster_id: cluster.dict() for cluster_id, cluster in self.memory_clusters.items()}
+                "short_term": [memory_to_dict(memory) for memory in self.short_term_memory],
+                "long_term": [memory_to_dict(memory) for memory in self.long_term_memory],
+                "clusters": {cluster_id: cluster.to_dict() for cluster_id, cluster in self.memory_clusters.items()}
             }
             
             with open(os.path.join(directory, "memories.json"), "w") as f:

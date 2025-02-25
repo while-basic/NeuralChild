@@ -122,6 +122,8 @@ def bootstrap_mind(mind: Mind) -> None:
     Args:
         mind: The Mind instance to bootstrap
     """
+    import random  # Ensure random is imported in this function
+    
     # Create initial experiences for bootstrapping
     experiences = [
         SimulatedInput(
@@ -164,6 +166,8 @@ def generate_environmental_input() -> Dict[str, Any]:
     Returns:
         Dictionary of sensory input data
     """
+    import random  # Ensure random is imported in this function
+    
     input_type = random.choice(["visual", "auditory", "language", "combined"])
     
     if input_type == "visual":
@@ -205,6 +209,8 @@ def process_mother_response(response_text: str) -> Dict[str, Any]:
     Returns:
         Dictionary of sensory input data
     """
+    import random  # Ensure random is imported in this function
+    
     # Create auditory component based on text length
     auditory_intensity = min(1.0, len(response_text) / 100)
     auditory_vector = [random.random() * auditory_intensity for _ in range(64)]
@@ -362,7 +368,7 @@ def save_models(checkpoint_name: Optional[str] = None):
             data_dict["development_history"] = data_dict["development_history"][-100:]
             data_dict["emotion_history"] = data_dict["emotion_history"][-100:]
             data_dict["memory_history"] = data_dict["memory_history"][-100:]
-            json.dump(data_dict, f, indent=2)
+            json.dump(data_dict, f, indent=2, cls=DateTimeEncoder)
         
         # Clean up old checkpoints if needed
         checkpoints = [d for d in os.listdir(save_dir) 
@@ -398,6 +404,19 @@ def load_models(checkpoint_dir: str):
         if os.path.exists(dashboard_file):
             with open(dashboard_file, "r") as f:
                 data_dict = json.load(f)
+                
+                # Process any datetime fields in history data
+                for history_name in ["development_history", "emotion_history", "memory_history"]:
+                    if history_name in data_dict:
+                        for entry in data_dict[history_name]:
+                            # Convert timestamp strings back to datetime objects if needed
+                            if "timestamp" in entry and isinstance(entry["timestamp"], str):
+                                try:
+                                    entry["timestamp"] = datetime.fromisoformat(entry["timestamp"])
+                                except (ValueError, TypeError):
+                                    # If conversion fails, leave as string
+                                    pass
+                
                 # Update dashboard data, preserving training config
                 training_config = dashboard_data.training_config
                 dashboard_data.__dict__.update(data_dict)
@@ -408,6 +427,13 @@ def load_models(checkpoint_dir: str):
         error_msg = f"Error loading models: {str(e)}"
         dashboard_data.errors.append(error_msg)
         return False, error_msg
+
+# Add a custom JSONEncoder to handle datetime objects
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 # Dash App Setup
 app = dash.Dash(
@@ -1093,7 +1119,7 @@ def update_development_graph(n_intervals):
         )
     
     # Prepare data
-    df = pd.DataFrame(history[-200:])  # Just use last 200 points to avoid overcrowding
+    df = pd.DataFrame(history[-200:])  # Just use last 200 points
     
     # Create figure
     fig = go.Figure()
