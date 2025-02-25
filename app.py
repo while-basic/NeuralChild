@@ -284,6 +284,7 @@ def simulation_loop(mind, mother):
     global running, message_queue
     
     iteration = 0
+    previous_stage = mind.state.developmental_stage
     
     while running:
         try:
@@ -293,20 +294,32 @@ def simulation_loop(mind, mother):
             # Advance mind simulation
             mind.step()
             
-            # Get observable state and generate mother response
+            # Get observable state
             observable_state = mind.get_observable_state()
-            st.session_state.observable_state = observable_state
             
             # Get network outputs
             network_outputs = {}
             for name, network in mind.networks.items():
                 network_outputs[name] = network.generate_text_output().text
             
+            # Get developmental metrics (don't update session state directly)
+            dev_metrics = update_developmental_metrics(mind)
+            
+            # Check if developmental stage has changed
+            current_stage = mind.state.developmental_stage
+            stage_changed = current_stage != previous_stage
+            if stage_changed:
+                dev_metrics['stage_time'] = datetime.now().isoformat()
+                logger.info(f"Developmental stage changed to {current_stage.name}")
+                previous_stage = current_stage
+            
             # Update message queue with the latest state
             message_queue.put({
                 "type": "state_update",
                 "observable_state": observable_state,
                 "network_outputs": network_outputs,
+                "developmental_metrics": dev_metrics,
+                "stage_changed": stage_changed,
                 "iteration": iteration
             })
             
@@ -319,11 +332,15 @@ def simulation_loop(mind, mother):
                     "response": response
                 })
                 
-                # Add to interaction history
-                st.session_state.interaction_history.append({
+                # Record interaction in metrics (don't access session state)
+                interaction_data = {
                     "timestamp": datetime.now(),
                     "observable_state": observable_state.to_dict(),
                     "mother_response": response.to_dict()
+                }
+                message_queue.put({
+                    "type": "new_interaction",
+                    "interaction_data": interaction_data
                 })
             
             # Update metrics
@@ -342,11 +359,15 @@ def simulation_loop(mind, mother):
             }
             simulation_metrics["timestamped_data"].append(metrics_snapshot)
             
-            # Update developmental metrics
-            update_developmental_metrics(mind)
+            # Send metrics update through message queue
+            message_queue.put({
+                "type": "metrics_update",
+                "metrics_snapshot": metrics_snapshot
+            })
             
-            # Sleep for the configured step interval
-            time.sleep(st.session_state.config.mind.step_interval)
+            # Sleep for the configured step interval from global metrics
+            step_interval = simulation_metrics.get("step_interval", 0.1)
+            time.sleep(step_interval)
             
         except Exception as e:
             logger.error(f"Error in simulation loop: {str(e)}", exc_info=True)
@@ -357,24 +378,30 @@ def simulation_loop(mind, mother):
             break
 
 def update_developmental_metrics(mind):
-    """Update developmental metrics from the mind."""
+    """Extract developmental metrics from the mind.
+    
+    Instead of directly updating session state, returns the metrics as a dict
+    to be sent through the message queue.
+    
+    Args:
+        mind: Mind object to extract metrics from
+        
+    Returns:
+        Dictionary of developmental metrics
+    """
     developmental_milestones = mind.developmental_milestones
     
-    st.session_state.developmental_metrics.update({
+    # Create metrics dictionary to return (don't access session state)
+    metrics = {
         'emotions_experienced': len(developmental_milestones.get('emotions_experienced', set())),
         'vocabulary_learned': len(developmental_milestones.get('vocabulary_learned', set())),
         'beliefs_formed': developmental_milestones.get('beliefs_formed', 0),
         'interactions_count': developmental_milestones.get('interactions_count', 0),
-        'memories_formed': developmental_milestones.get('memories_formed', 0)
-    })
+        'memories_formed': developmental_milestones.get('memories_formed', 0),
+    }
     
-    # Check if developmental stage has changed
-    current_stage = mind.state.developmental_stage
-    previous_stage = st.session_state.observable_state.developmental_stage if st.session_state.observable_state else current_stage
-    
-    if current_stage != previous_stage:
-        st.session_state.developmental_metrics['stage_time'] = datetime.now()
-        logger.info(f"Developmental stage changed to {current_stage.name}")
+    # Return metrics to be sent through message queue
+    return metrics
 
 def start_simulation():
     """Start the simulation in a separate thread."""
@@ -386,6 +413,10 @@ def start_simulation():
     # Get references to mind and mother before threading
     mind = st.session_state.mind
     mother = st.session_state.mother
+    
+    # Store the step interval in the global simulation_metrics
+    step_interval = st.session_state.config.mind.step_interval
+    simulation_metrics["step_interval"] = step_interval
     
     running = True
     st.session_state.running = True
@@ -426,12 +457,46 @@ def process_message_queue():
             message_type = message.get("type")
             
             if message_type == "state_update":
+                # Update observable state
                 st.session_state.observable_state = message.get("observable_state")
-                st.session_state.network_outputs = message.get("network_outputs")
-                update_metrics_history(message.get("observable_state"))
+                
+                # Update network outputs
+                st.session_state.network_outputs = message.get("network_outputs", {})
+                
+                # Update developmental metrics if provided
+                if "developmental_metrics" in message:
+                    metrics = message.get("developmental_metrics")
+                    
+                    # Update the metrics in the session state
+                    for key, value in metrics.items():
+                        if key in st.session_state.developmental_metrics:
+                            st.session_state.developmental_metrics[key] = value
+                
+                    # If stage changed, update the stage time
+                    if message.get("stage_changed", False):
+                        if "stage_time" in metrics:
+                            # Convert ISO string back to datetime
+                            stage_time = datetime.fromisoformat(metrics["stage_time"])
+                            st.session_state.developmental_metrics["stage_time"] = stage_time
+                
+                # Update metrics history with the latest state
+                if st.session_state.observable_state:
+                    update_metrics_history(st.session_state.observable_state)
                 
             elif message_type == "mother_response":
                 st.session_state.mother_response = message.get("response")
+                
+            elif message_type == "new_interaction":
+                # Add to interaction history
+                interaction_data = message.get("interaction_data")
+                if interaction_data:
+                    st.session_state.interaction_history.append(interaction_data)
+                
+            elif message_type == "metrics_update":
+                # Process metrics update
+                metrics_snapshot = message.get("metrics_snapshot")
+                if metrics_snapshot and "timestamp" in metrics_snapshot:
+                    update_metrics_from_snapshot(metrics_snapshot)
                 
             elif message_type == "error":
                 st.error(f"Simulation error: {message.get('error')}")
@@ -441,6 +506,43 @@ def process_message_queue():
             break
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}", exc_info=True)
+            st.error(f"Error updating dashboard: {str(e)}")
+
+def update_metrics_from_snapshot(snapshot):
+    """Update metrics history from a snapshot.
+    
+    Args:
+        snapshot: Dictionary containing metrics snapshot
+    """
+    # Make sure we have the required keys
+    if not all(k in snapshot for k in ["timestamp", "energy", "mood", "consciousness"]):
+        return
+        
+    # Add current timestamp
+    current_time = snapshot["timestamp"]
+    st.session_state.metrics_history['time_series'].append(current_time)
+    
+    # Add energy level
+    st.session_state.metrics_history['energy'].append(snapshot["energy"])
+    
+    # Add mood
+    st.session_state.metrics_history['mood'].append(snapshot["mood"])
+    
+    # Add consciousness level
+    st.session_state.metrics_history['consciousness'].append(snapshot["consciousness"])
+    
+    # Add interaction count
+    interactions = simulation_metrics.get("mother_interactions", 0)
+    st.session_state.metrics_history['interactions'].append(interactions)
+    
+    # Process emotions
+    if "emotions" in snapshot:
+        emotions_dict = snapshot["emotions"]
+        st.session_state.metrics_history['emotions'].append(emotions_dict)
+    
+    # Process needs
+    if "needs" in snapshot:
+        st.session_state.metrics_history['needs'].append(snapshot["needs"])
 
 def update_metrics_history(observable_state):
     """Update the metrics history with the latest state."""
