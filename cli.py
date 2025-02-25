@@ -15,14 +15,14 @@ import json
 import yaml
 from datetime import datetime
 
-from neuralchild.config import load_config, Config, get_config
-from neuralchild.mind.mind_core import Mind
-from neuralchild.mother.mother_llm import MotherLLM
-from neuralchild.mind.networks.consciousness import ConsciousnessNetwork
-from neuralchild.mind.networks.emotions import EmotionsNetwork
-from neuralchild.mind.networks.perception import PerceptionNetwork
-from neuralchild.mind.networks.thoughts import ThoughtsNetwork
-from neuralchild.core.schemas import DevelopmentalStage
+from config import load_config, Config, get_config
+from mind.mind_core import Mind
+from mother.mother_llm import MotherLLM
+from mind.networks.consciousness import ConsciousnessNetwork
+from mind.networks.emotions import EmotionsNetwork
+from mind.networks.perception import PerceptionNetwork
+from mind.networks.thoughts import ThoughtsNetwork
+from core.schemas import DevelopmentalStage
 
 # For visualization import visualization modules if enabled
 try:
