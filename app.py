@@ -57,6 +57,14 @@ simulation_metrics = {
     "timestamped_data": []
 }
 
+# Configure exception handling for threads
+def thread_exception_handler(args):
+    """Handle exceptions in threads to avoid silent failures"""
+    logger.error(f"Unhandled exception in thread: {args.exc_type}: {args.exc_value}")
+    logger.error(f"Thread traceback: {args.exc_traceback}")
+    
+threading.excepthook = thread_exception_handler
+
 # Colors for different developmental stages
 STAGE_COLORS = {
     "INFANT": "#9bc2e6",     # Light blue
@@ -82,30 +90,22 @@ EMOTION_COLORS = {
 }
 
 def initialize_session_state():
-    """Initialize Streamlit session state variables."""
-    if 'config' not in st.session_state:
-        st.session_state.config = get_config()
+    """Initialize Streamlit session state variables.
     
-    if 'mind' not in st.session_state:
-        st.session_state.mind = None
-        
-    if 'mother' not in st.session_state:
-        st.session_state.mother = None
-        
-    if 'running' not in st.session_state:
-        st.session_state.running = False
-        
-    if 'observable_state' not in st.session_state:
-        st.session_state.observable_state = None
-        
-    if 'mother_response' not in st.session_state:
-        st.session_state.mother_response = None
-        
-    if 'interaction_history' not in st.session_state:
-        st.session_state.interaction_history = []
-        
-    if 'metrics_history' not in st.session_state:
-        st.session_state.metrics_history = {
+    This ensures all required session state variables are created before
+    any other part of the app tries to access them.
+    """
+    # Use a dictionary to define all session state variables
+    # This is more reliable than individual checks
+    defaults = {
+        'config': get_config(),
+        'mind': None,
+        'mother': None,
+        'running': False,
+        'observable_state': None,
+        'mother_response': None,
+        'interaction_history': [],
+        'metrics_history': {
             'energy': [],
             'mood': [],
             'consciousness': [],
@@ -113,20 +113,23 @@ def initialize_session_state():
             'emotions': [],
             'needs': [],
             'time_series': []
-        }
-        
-    if 'developmental_metrics' not in st.session_state:
-        st.session_state.developmental_metrics = {
+        },
+        'developmental_metrics': {
             'emotions_experienced': 0,
             'vocabulary_learned': 0,
             'beliefs_formed': 0,
             'interactions_count': 0,
             'memories_formed': 0,
             'stage_time': datetime.now()
-        }
-        
-    if 'network_outputs' not in st.session_state:
-        st.session_state.network_outputs = {}
+        },
+        'network_outputs': {},
+        'thread_created': False  # Add flag to track if thread was already created
+    }
+    
+    # Initialize all session state variables
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -157,50 +160,65 @@ def load_project_configuration(config_path=None):
 
 def initialize_simulation():
     """Initialize the Neural Child simulation."""
-    # Initialize mind and mother
-    mind = Mind()
-    mother = MotherLLM()
-    
-    # Initialize neural networks
-    initialize_networks(mind, st.session_state.config)
-    
-    # Store in session state
-    st.session_state.mind = mind
-    st.session_state.mother = mother
-    
-    # Initialize metrics
-    simulation_metrics["iterations"] = 0
-    simulation_metrics["start_time"] = datetime.now()
-    simulation_metrics["mother_interactions"] = 0
-    simulation_metrics["developmental_milestones"] = {}
-    simulation_metrics["timestamped_data"] = []
-    
-    # Clear history
-    st.session_state.interaction_history = []
-    st.session_state.metrics_history = {
-        'energy': [],
-        'mood': [],
-        'consciousness': [],
-        'interactions': [],
-        'emotions': [],
-        'needs': [],
-        'time_series': []
-    }
-    
-    st.session_state.developmental_metrics = {
-        'emotions_experienced': 0,
-        'vocabulary_learned': 0,
-        'beliefs_formed': 0,
-        'interactions_count': 0,
-        'memories_formed': 0,
-        'stage_time': datetime.now()
-    }
-    
-    # Set initial observable state
-    st.session_state.observable_state = mind.get_observable_state()
-    
-    logger.info("Simulation initialized")
-    return mind, mother
+    try:
+        # Initialize mind and mother
+        mind = Mind()
+        mother = MotherLLM()
+        
+        # Initialize neural networks
+        initialize_networks(mind, st.session_state.config)
+        
+        # Store in session state
+        st.session_state.mind = mind
+        st.session_state.mother = mother
+        
+        # Reset thread created flag
+        st.session_state.thread_created = False
+        
+        # Initialize metrics
+        simulation_metrics["iterations"] = 0
+        simulation_metrics["start_time"] = datetime.now()
+        simulation_metrics["mother_interactions"] = 0
+        simulation_metrics["developmental_milestones"] = {}
+        simulation_metrics["timestamped_data"] = []
+        
+        # Clear history
+        st.session_state.interaction_history = []
+        st.session_state.metrics_history = {
+            'energy': [],
+            'mood': [],
+            'consciousness': [],
+            'interactions': [],
+            'emotions': [],
+            'needs': [],
+            'time_series': []
+        }
+        
+        st.session_state.developmental_metrics = {
+            'emotions_experienced': 0,
+            'vocabulary_learned': 0,
+            'beliefs_formed': 0,
+            'interactions_count': 0,
+            'memories_formed': 0,
+            'stage_time': datetime.now()
+        }
+        
+        # Set initial observable state
+        st.session_state.observable_state = mind.get_observable_state()
+        
+        # Initialize network outputs dictionary
+        st.session_state.network_outputs = {}
+        for name in mind.networks:
+            st.session_state.network_outputs[name] = mind.networks[name].generate_text_output().text
+        
+        logger.info("Simulation initialized")
+        return mind, mother
+        
+    except Exception as e:
+        # Better error handling
+        logger.error(f"Error initializing simulation: {str(e)}", exc_info=True)
+        st.error(f"Failed to initialize simulation: {str(e)}")
+        return None, None
 
 def initialize_networks(mind, config):
     """Initialize and register neural networks with the mind."""
@@ -256,12 +274,15 @@ def initialize_networks(mind, config):
         except KeyError:
             logger.warning(f"Invalid starting stage: {config.mind.starting_stage}, using INFANT")
 
-def simulation_loop():
-    """Main simulation loop running in a separate thread."""
+def simulation_loop(mind, mother):
+    """Main simulation loop running in a separate thread.
+    
+    Args:
+        mind: Mind object passed directly to avoid session state issues
+        mother: MotherLLM object passed directly to avoid session state issues
+    """
     global running, message_queue
     
-    mind = st.session_state.mind
-    mother = st.session_state.mother
     iteration = 0
     
     while running:
@@ -362,11 +383,18 @@ def start_simulation():
     if not st.session_state.mind or not st.session_state.mother:
         initialize_simulation()
     
+    # Get references to mind and mother before threading
+    mind = st.session_state.mind
+    mother = st.session_state.mother
+    
     running = True
     st.session_state.running = True
     
-    # Start the simulation thread
-    simulation_thread = threading.Thread(target=simulation_loop)
+    # Start the simulation thread - pass mind and mother directly to avoid session state issues
+    simulation_thread = threading.Thread(
+        target=simulation_loop,
+        args=(mind, mother)
+    )
     simulation_thread.daemon = True
     simulation_thread.start()
     
@@ -550,13 +578,25 @@ def display_main_dashboard():
         # Simulation controls
         if not st.session_state.running:
             if st.button("▶️ Start Simulation", key="start_btn", use_container_width=True):
-                start_simulation()
+                try:
+                    start_simulation()
+                except Exception as e:
+                    st.error(f"Failed to start simulation: {str(e)}")
+                    logger.error(f"Error starting simulation: {str(e)}", exc_info=True)
         else:
             if st.button("⏹️ Stop Simulation", key="stop_btn", use_container_width=True):
-                stop_simulation()
+                try:
+                    stop_simulation()
+                except Exception as e:
+                    st.error(f"Failed to stop simulation: {str(e)}")
+                    logger.error(f"Error stopping simulation: {str(e)}", exc_info=True)
                 
         if st.button("🔄 Restart Simulation", key="restart_btn", use_container_width=True):
-            restart_simulation()
+            try:
+                restart_simulation()
+            except Exception as e:
+                st.error(f"Failed to restart simulation: {str(e)}")
+                logger.error(f"Error restarting simulation: {str(e)}", exc_info=True)
     
     with col2:
         # Current stage and status
@@ -1343,29 +1383,35 @@ def display_configuration():
 
 def main():
     """Main function for the Streamlit app."""
-    # Set page config
-    st.set_page_config(
-        page_title="Neural Child Brain Simulation",
-        page_icon="🧠",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
+    try:
+        # Set page config
+        st.set_page_config(
+            page_title="Neural Child Brain Simulation",
+            page_icon="🧠",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
+        
+        # Parse command line arguments
+        args = parse_arguments()
+        
+        # Initialize session state - must happen before anything else!
+        initialize_session_state()
+        
+        # Load project configuration
+        load_project_configuration(args.config)
+        
+        # Display the dashboard
+        display_dashboard()
+        
+        # Process message queue from simulation thread
+        if st.session_state.running:
+            process_message_queue()
     
-    # Parse command line arguments
-    args = parse_arguments()
-    
-    # Initialize session state
-    initialize_session_state()
-    
-    # Load project configuration
-    load_project_configuration(args.config)
-    
-    # Display the dashboard
-    display_dashboard()
-    
-    # Process message queue from simulation thread
-    if st.session_state.running:
-        process_message_queue()
+    except Exception as e:
+        # Provide better error handling for debugging
+        st.error(f"An error occurred: {str(e)}")
+        logger.error(f"Application error: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     main()
