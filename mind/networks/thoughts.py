@@ -12,8 +12,8 @@ from datetime import datetime
 import numpy as np
 import logging
 
-from neuralchild.core.neural_network import NeuralNetwork
-from neuralchild.core.schemas import NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage, Belief
+from core.neural_network import NeuralNetwork
+from core.schemas import NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage, Belief
 
 # Configure logging
 logger = logging.getLogger(__name__)

@@ -12,7 +12,7 @@ import time
 import random
 from pydantic import BaseModel
 
-from neuralchild.config import config
+from config import config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

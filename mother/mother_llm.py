@@ -11,11 +11,11 @@ import json
 import logging
 from pydantic import BaseModel, Field
 
-from neuralchild.mind.mind_core import Mind
-from neuralchild.mind.schemas import ObservableState
-from neuralchild.core.schemas import DevelopmentalStage
-from neuralchild.utils.llm_module import chat_completion
-from neuralchild.config import config
+from mind.mind_core import Mind
+from mind.schemas import ObservableState
+from core.schemas import DevelopmentalStage
+from utils.llm_module import chat_completion
+from config import config
 
 # Configure logging
 logger = logging.getLogger(__name__)
