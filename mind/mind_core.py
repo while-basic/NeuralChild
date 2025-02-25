@@ -1570,12 +1570,6 @@ class Mind:
         """Check if neural networks should grow based on development."""
         current_time = datetime.now()
         
-        # Determine interval based on developmental stage
-        check_interval = 300.0  # 5 minutes base interval
-        if self.state.developmental_stage.value > DevelopmentalStage.INFANT.value:
-            # Check more frequently in later stages
-            check_interval = 300.0 / self.state.developmental_stage.value
-            
         # Only check periodically
         if (current_time - self.last_network_growth_check).total_seconds() < check_interval:
             return
@@ -1586,52 +1580,32 @@ class Mind:
         if growth_rate <= 0.0:
             self.last_network_growth_check = current_time
             return
-            
-        # Check if we should trigger growth
-        if random.random() < growth_rate:
-            # Select a network for potential growth
-            growth_candidates = []
-            
-            for name, network in self.networks.items():
-                # Check if this network is active and growth-eligible
-                if hasattr(network, "growth_eligible") and network.growth_eligible:
-                    # Calculate growth priority based on activity and current complexity
-                    activity_level = 0.5  # Default middle value
+        
+        # Check for networks that need to grow
+        for name, network in self.networks.items():
+            # Check if eligible and time for growth
+            if (hasattr(network, "growth_eligible") and 
+                network.growth_eligible and 
+                random.random() < growth_rate):
+                
+                # Get current dimensions
+                current_dims = [network.input_dim, network.output_dim]
+                
+                # Clone with growth
+                try:
+                    # This now works because all subclasses implement clone_with_growth
+                    grown_network = network.clone_with_growth(growth_factor=1.2)
                     
-                    # Use recent activity if available
-                    if hasattr(network, "last_activations") and network.last_activations:
-                        activity_level = sum(network.last_activations) / len(network.last_activations)
-                        
-                    # Prioritize active networks at appropriate developmental stage
-                    growth_priority = activity_level * (1.0 - 0.1 * abs(network.developmental_stage.value - self.state.developmental_stage.value))
+                    # Replace the network in our registry
+                    self.networks[name] = grown_network
+                    self.developmental_milestones["network_growth_events"] += 1
                     
-                    growth_candidates.append((name, network, growth_priority))
-            
-            # If we have candidates, select one weighted by priority
-            if growth_candidates:
-                total_priority = sum(priority for _, _, priority in growth_candidates)
-                if total_priority > 0:
-                    r = random.random() * total_priority
+                    logger.info(f"Network {name} grown from {current_dims} → "
+                            f"[{grown_network.input_dim}, {grown_network.output_dim}]")
                     
-                    cumulative = 0
-                    selected_name = None
-                    selected_network = None
-                    
-                    for name, network, priority in growth_candidates:
-                        cumulative += priority
-                        if r <= cumulative:
-                            selected_name = name
-                            selected_network = network
-                            break
-                            
-                    if selected_network and hasattr(selected_network, "_check_for_network_growth"):
-                        # Trigger growth check for selected network
-                        growth_occurred = selected_network._check_for_network_growth("developmental_growth")
-                        
-                        if growth_occurred:
-                            self.developmental_milestones["network_growth_events"] += 1
-                            logger.info(f"Network {selected_name} growth triggered by developmental check")
-                            
+                except Exception as e:
+                    logger.error(f"Error growing network {name}: {str(e)}")
+        
         self.last_network_growth_check = current_time
         
     def _update_mind_state(self) -> None:

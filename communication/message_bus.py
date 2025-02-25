@@ -27,7 +27,7 @@ class MessageFilter(BaseModel):
         default=None, description="Maximum developmental stage (inclusive)"
     )
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_filter(cls, values):
         """Validate that at least one filter criterion is specified."""
         if not any(values.get(field) is not None for field in ["sender", "receiver", "message_type", "min_priority", "max_developmental_stage"]):

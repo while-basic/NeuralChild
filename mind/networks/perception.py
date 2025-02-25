@@ -10,9 +10,13 @@ from typing import Optional, Dict, Any, List, Tuple
 import random
 from datetime import datetime
 import numpy as np
+import logging
 
 from core.neural_network import NeuralNetwork
 from core.schemas import NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class PerceptionNetwork(NeuralNetwork):
     """
@@ -458,3 +462,55 @@ class PerceptionNetwork(NeuralNetwork):
             text=text,
             confidence=confidence
         )
+        
+    def clone_with_growth(self, growth_factor: float = 1.2, min_dim: int = 8) -> 'PerceptionNetwork':
+        """Create a larger clone of this network with scaled dimensions.
+        
+        Args:
+            growth_factor: Factor to scale dimensions by
+            min_dim: Minimum dimension size to ensure
+            
+        Returns:
+            Larger clone of this network with scaled dimensions
+        """
+        # Calculate new dimensions
+        new_input_dim = max(min_dim, int(self.input_dim * growth_factor))
+        new_hidden_dim = max(min_dim * 2, int(self.visual_processor[1].out_features * 2 * growth_factor))
+        new_output_dim = max(min_dim, int(self.output_dim * growth_factor))
+        
+        # Create new network with expanded dimensions
+        new_network = PerceptionNetwork(
+            input_dim=new_input_dim, 
+            hidden_dim=new_hidden_dim, 
+            output_dim=new_output_dim
+        )
+        
+        # Transfer perception properties
+        new_network.object_recognition = self.object_recognition
+        new_network.pattern_recognition = self.pattern_recognition
+        new_network.attentional_focus = self.attentional_focus
+        new_network.recent_perceptions = copy.deepcopy(self.recent_perceptions)
+        
+        # Transfer growth metrics
+        new_network.growth_metrics = copy.deepcopy(self.growth_metrics)
+        new_network.experience_count = self.experience_count
+        
+        # Record growth event
+        new_network.growth_history = copy.deepcopy(self.growth_history)
+        new_network.growth_history.append(NeuralGrowthRecord(
+            event_type="network_expansion",
+            layer_affected="all_processors",
+            old_shape=[self.input_dim, self.visual_processor[1].out_features * 2, self.output_dim],
+            new_shape=[new_input_dim, new_hidden_dim, new_output_dim],
+            growth_factor=growth_factor,
+            trigger="clone_with_growth",
+            developmental_stage=self.developmental_stage
+        ))
+        
+        logger.info(
+            f"PerceptionNetwork cloned with growth factor {growth_factor}: "
+            f"({self.input_dim}, {self.visual_processor[1].out_features * 2}, {self.output_dim}) → "
+            f"({new_input_dim}, {new_hidden_dim}, {new_output_dim})"
+        )
+        
+        return new_network

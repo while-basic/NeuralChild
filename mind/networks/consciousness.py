@@ -358,3 +358,60 @@ class ConsciousnessNetwork(NeuralNetwork):
             text=text,
             confidence=self.awareness_level
         )
+        
+    def clone_with_growth(self, growth_factor: float = 1.2, min_dim: int = 8) -> 'ConsciousnessNetwork':
+        """Create a larger clone of this network with scaled dimensions.
+        
+        Args:
+            growth_factor: Factor to scale dimensions by
+            min_dim: Minimum dimension size to ensure
+            
+        Returns:
+            Larger clone of this network with scaled dimensions
+        """
+        # Calculate new dimensions
+        new_input_dim = max(min_dim, int(self.input_dim * growth_factor))
+        new_hidden_dim = max(min_dim * 2, int(self.rnn.hidden_size * growth_factor))
+        new_output_dim = max(min_dim, int(self.output_dim * growth_factor))
+        
+        # Create new network with expanded dimensions
+        new_network = ConsciousnessNetwork(
+            input_dim=new_input_dim, 
+            hidden_dim=new_hidden_dim, 
+            output_dim=new_output_dim
+        )
+        
+        # Transfer developmental state
+        new_network.developmental_stage = self.developmental_stage
+        new_network.awareness_level = self.awareness_level
+        new_network.attending_to = self.attending_to
+        new_network.self_awareness = self.self_awareness
+        new_network.integration_capacity = self.integration_capacity
+        
+        # Transfer growth metrics
+        new_network.growth_metrics = copy.deepcopy(self.growth_metrics)
+        new_network.experience_count = self.experience_count
+        
+        # Record growth event
+        new_network.growth_history = copy.deepcopy(self.growth_history)
+        new_network.growth_history.append(NeuralGrowthRecord(
+            event_type="network_expansion",
+            layer_affected="all",
+            old_shape=[self.input_dim, self.rnn.hidden_size, self.output_dim],
+            new_shape=[new_input_dim, new_hidden_dim, new_output_dim],
+            growth_factor=growth_factor,
+            trigger="clone_with_growth",
+            developmental_stage=self.developmental_stage
+        ))
+        
+        # Reset hidden state to accommodate new dimensions
+        new_network.hidden = None
+        
+        # Log the growth
+        logger.info(
+            f"ConsciousnessNetwork cloned with growth factor {growth_factor}: "
+            f"({self.input_dim}, {self.rnn.hidden_size}, {self.output_dim}) → "
+            f"({new_input_dim}, {new_hidden_dim}, {new_output_dim})"
+        )
+        
+        return new_network

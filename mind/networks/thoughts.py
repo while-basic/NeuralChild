@@ -649,3 +649,61 @@ class ThoughtsNetwork(NeuralNetwork):
             text=text,
             confidence=confidence
         )
+        
+    def clone_with_growth(self, growth_factor: float = 1.2, min_dim: int = 8) -> 'ThoughtsNetwork':
+        """Create a larger clone of this network with scaled dimensions.
+        
+        Args:
+            growth_factor: Factor to scale dimensions by
+            min_dim: Minimum dimension size to ensure
+            
+        Returns:
+            Larger clone of this network with scaled dimensions
+        """
+        # Calculate new dimensions
+        new_input_dim = max(min_dim, int(self.input_dim * growth_factor))
+        new_hidden_dim = max(min_dim * 2, int(self.thought_rnn.hidden_size * growth_factor))
+        new_output_dim = max(min_dim, int(self.output_dim * growth_factor))
+        
+        # Create new network with expanded dimensions
+        new_network = ThoughtsNetwork(
+            input_dim=new_input_dim, 
+            hidden_dim=new_hidden_dim, 
+            output_dim=new_output_dim
+        )
+        
+        # Transfer thought properties
+        new_network.abstract_thinking = self.abstract_thinking
+        new_network.logical_reasoning = self.logical_reasoning
+        new_network.creativity = self.creativity
+        new_network.current_thoughts = copy.deepcopy(self.current_thoughts)
+        new_network.beliefs = copy.deepcopy(self.beliefs)
+        new_network.concept_network = copy.deepcopy(self.concept_network)
+        new_network.vocabulary = copy.deepcopy(self.vocabulary)
+        
+        # Transfer growth metrics
+        new_network.growth_metrics = copy.deepcopy(self.growth_metrics)
+        new_network.experience_count = self.experience_count
+        
+        # Record growth event
+        new_network.growth_history = copy.deepcopy(self.growth_history)
+        new_network.growth_history.append(NeuralGrowthRecord(
+            event_type="network_expansion",
+            layer_affected="all",
+            old_shape=[self.input_dim, self.thought_rnn.hidden_size, self.output_dim],
+            new_shape=[new_input_dim, new_hidden_dim, new_output_dim],
+            growth_factor=growth_factor,
+            trigger="clone_with_growth",
+            developmental_stage=self.developmental_stage
+        ))
+        
+        # Reset hidden state for new dimensions
+        new_network.hidden_state = None
+        
+        logger.info(
+            f"ThoughtsNetwork cloned with growth factor {growth_factor}: "
+            f"({self.input_dim}, {self.thought_rnn.hidden_size}, {self.output_dim}) → "
+            f"({new_input_dim}, {new_hidden_dim}, {new_output_dim})"
+        )
+        
+        return new_network

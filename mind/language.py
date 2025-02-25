@@ -1112,3 +1112,60 @@ class LanguageNetwork(NeuralNetwork):
             "understanding_level": self.language_ability.understanding_level,
             "expression_level": self.language_ability.expression_level
         })
+        
+    def clone_with_growth(self, growth_factor: float = 1.2, min_dim: int = 8) -> 'LanguageNetwork':
+        """Create a larger clone of this network with scaled dimensions.
+        
+        Args:
+            growth_factor: Factor to scale dimensions by
+            min_dim: Minimum dimension size to ensure
+            
+        Returns:
+            Larger clone of this network with scaled dimensions
+        """
+        # Calculate new dimensions
+        new_input_dim = max(min_dim, int(self.input_dim * growth_factor))
+        new_hidden_dim = max(min_dim * 2, int(self.lstm.hidden_size * growth_factor))
+        new_output_dim = max(min_dim, int(self.output_dim * growth_factor))
+        
+        # Create new network with expanded dimensions
+        new_network = LanguageNetwork(
+            input_dim=new_input_dim, 
+            hidden_dim=new_hidden_dim, 
+            output_dim=new_output_dim
+        )
+        
+        # Transfer language properties
+        new_network.vocabulary = copy.deepcopy(self.vocabulary)  
+        new_network.vocabulary_embedding_dim = int(self.vocabulary_embedding_dim * growth_factor)
+        new_network.syntax_rules = copy.deepcopy(self.syntax_rules)
+        new_network.language_ability = copy.deepcopy(self.language_ability)
+        new_network.recent_utterances = copy.deepcopy(self.recent_utterances)
+        
+        # Transfer growth metrics
+        new_network.growth_metrics = copy.deepcopy(self.growth_metrics)
+        new_network.experience_count = self.experience_count
+        
+        # Record growth event
+        new_network.growth_history = copy.deepcopy(self.growth_history)
+        new_network.growth_history.append(NeuralGrowthRecord(
+            event_type="network_expansion",
+            layer_affected="all",
+            old_shape=[self.input_dim, self.lstm.hidden_size, self.output_dim],
+            new_shape=[new_input_dim, new_hidden_dim, new_output_dim],
+            growth_factor=growth_factor,
+            trigger="clone_with_growth",
+            developmental_stage=self.developmental_stage
+        ))
+        
+        # Reset hidden states
+        new_network.hidden = None
+        new_network.cell = None
+        
+        logger.info(
+            f"LanguageNetwork cloned with growth factor {growth_factor}: "
+            f"({self.input_dim}, {self.lstm.hidden_size}, {self.output_dim}) → "
+            f"({new_input_dim}, {new_hidden_dim}, {new_output_dim})"
+        )
+        
+        return new_network
