@@ -11,8 +11,9 @@ import sys
 import threading
 import time
 import json
-from typing import Dict, Any, List, Optional, Union
-from pydantic import BaseModel, Field
+import random
+from typing import Dict, Any, List, Optional, Union, Set
+from pydantic import BaseModel, Field, validator, root_validator
 
 # Add project root to path to import project modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,7 +26,42 @@ from mind.networks.consciousness import ConsciousnessNetwork
 from mind.networks.emotions import EmotionsNetwork
 from mind.networks.perception import PerceptionNetwork
 from mind.networks.thoughts import ThoughtsNetwork
+from mind.schemas import EmotionType
 from core.schemas import DevelopmentalStage
+
+# Configure logging
+import logging
+logger = logging.getLogger(__name__)
+
+# Define models for input processing with Pydantic
+class SimulatedInput(BaseModel):
+    """Structured input model for mind simulation."""
+    visual: Optional[List[float]] = None
+    auditory: Optional[List[float]] = None
+    language: Optional[str] = None
+    source: str = "environment"
+    type: Optional[str] = None
+    
+    @validator('visual', 'auditory', pre=True)
+    def ensure_proper_length(cls, v, values, **kwargs):
+        """Ensure sensory inputs have proper length."""
+        if v is not None:
+            if len(v) > 64:
+                return v[:64]
+            elif len(v) < 64:
+                return v + [0.0] * (64 - len(v))
+        return v
+    
+    @root_validator(skip_on_failure=True)
+    def ensure_has_content(cls, values):
+        """Ensure at least one input type is provided."""
+        if not any(values.get(key) for key in ['visual', 'auditory', 'language']):
+            raise ValueError("At least one input type (visual, auditory, language) must be provided")
+        return values
+    
+    class Config:
+        validate_assignment = True
+        extra = "allow"
 
 # Define models for the dashboard configuration
 class TrainingConfig(BaseModel):
@@ -35,6 +71,9 @@ class TrainingConfig(BaseModel):
     checkpoint_count: int = Field(default=5, ge=1, description="Number of checkpoints to keep")
     step_interval: float = Field(default=0.1, ge=0.01, le=10.0, description="Time between simulation steps (seconds)")
     auto_backup: bool = Field(default=True, description="Automatically backup models")
+    
+    class Config:
+        validate_assignment = True
 
 class DashboardData(BaseModel):
     """Data store for the dashboard."""
@@ -49,6 +88,9 @@ class DashboardData(BaseModel):
     training_config: TrainingConfig = Field(default_factory=TrainingConfig)
     last_saved_step: int = Field(default=0)
     errors: List[str] = Field(default_factory=list)
+    
+    class Config:
+        validate_assignment = True
 
 # Initialize global state
 dashboard_data = DashboardData()
@@ -70,6 +112,111 @@ for name, network in networks.items():
 simulation_thread = None
 simulation_active = False
 
+def bootstrap_mind(mind: Mind) -> None:
+    """Bootstrap the mind with initial experiences to jump-start development.
+    
+    This function provides foundational experiences to the mind to
+    initialize development processes.
+    
+    Args:
+        mind: The Mind instance to bootstrap
+    """
+    # Create initial experiences for bootstrapping
+    experiences = [
+        SimulatedInput(
+            type="maternal_face",
+            visual=[random.random() for _ in range(64)],
+            source="mother"
+        ),
+        SimulatedInput(
+            type="maternal_voice", 
+            auditory=[random.random() for _ in range(64)],
+            language="hello my sweet baby",
+            source="mother"
+        ),
+        SimulatedInput(
+            type="comfort",
+            language="there there, mommy's here",
+            source="mother"
+        ),
+        SimulatedInput(
+            type="toy_perception",
+            visual=[random.random() for _ in range(64)],
+            source="environment"
+        ),
+        SimulatedInput(
+            type="environmental_sound",
+            auditory=[random.random() for _ in range(64)],
+            source="environment"
+        )
+    ]
+    
+    # Process each bootstrap experience
+    for exp in experiences:
+        mind.process_input(exp.dict(exclude_none=True))
+    
+    logger.info("Mind bootstrapped with initial experiences")
+
+def generate_environmental_input() -> Dict[str, Any]:
+    """Generate environmental sensory inputs for the mind.
+    
+    Returns:
+        Dictionary of sensory input data
+    """
+    input_type = random.choice(["visual", "auditory", "language", "combined"])
+    
+    if input_type == "visual":
+        simulated_input = SimulatedInput(
+            visual=[random.random() for _ in range(64)],
+            type="visual_stimulus",
+            source="visual_environment"
+        )
+    elif input_type == "auditory":
+        simulated_input = SimulatedInput(
+            auditory=[random.random() for _ in range(64)],
+            type="auditory_stimulus",
+            source="auditory_environment" 
+        )
+    elif input_type == "language":
+        words = ["mama", "dada", "baby", "milk", "toy", "hug", "play", "sleep"]
+        language_input = " ".join(random.sample(words, k=random.randint(1, 2)))
+        simulated_input = SimulatedInput(
+            language=language_input,
+            type="language_stimulus",
+            source="environment_sounds"
+        )
+    else:  # combined
+        simulated_input = SimulatedInput(
+            visual=[random.random() for _ in range(64)],
+            auditory=[random.random() for _ in range(64)],
+            type="multimodal_stimulus",
+            source="rich_environment"
+        )
+    
+    return simulated_input.dict(exclude_none=True)
+
+def process_mother_response(response_text: str) -> Dict[str, Any]:
+    """Process mother's response as sensory input.
+    
+    Args:
+        response_text: Text of mother's response
+        
+    Returns:
+        Dictionary of sensory input data
+    """
+    # Create auditory component based on text length
+    auditory_intensity = min(1.0, len(response_text) / 100)
+    auditory_vector = [random.random() * auditory_intensity for _ in range(64)]
+    
+    mother_input = SimulatedInput(
+        language=response_text,
+        auditory=auditory_vector,
+        type="maternal_communication",
+        source="mother"
+    )
+    
+    return mother_input.dict(exclude_none=True)
+
 def run_simulation():
     """Run the simulation in the background."""
     global simulation_active, dashboard_data
@@ -77,12 +224,31 @@ def run_simulation():
     simulation_active = True
     step_count = dashboard_data.step_count
     
+    # Bootstrap the mind at the start
+    if step_count == 0:
+        bootstrap_mind(mind)
+    
     while simulation_active:
         try:
             # Run one simulation step
             mind.step()
             dashboard_data.step_count += 1
             step_count += 1
+            
+            # Generate simulated input periodically (every 3 steps)
+            if step_count % 3 == 0:
+                env_input = generate_environmental_input()
+                mind.process_input(env_input)
+            
+            # Generate mother response periodically
+            if step_count % 10 == 0:
+                response = mother.observe_and_respond(mind)
+                if response:
+                    dashboard_data.last_mother_response = response.response
+                    
+                    # Process mother's response as sensory input
+                    mother_input = process_mother_response(response.response)
+                    mind.process_input(mother_input)
             
             # Get observable state and update dashboard data
             observable_state = mind.get_observable_state()
@@ -107,12 +273,6 @@ def run_simulation():
                     "confidence": text_output.confidence,
                     "parameters": network.state.parameters
                 }
-            
-            # Generate mother response periodically
-            if step_count % 10 == 0:
-                response = mother.observe_and_respond(mind)
-                if response:
-                    dashboard_data.last_mother_response = response.response
             
             # Track development history
             dashboard_data.development_history.append({
@@ -1363,12 +1523,14 @@ def save_models_callback(n_clicks):
 def apply_configuration(n_clicks, step_interval, save_interval, checkpoint_count, save_directory, auto_backup):
     if n_clicks:
         try:
-            # Update dashboard data
-            dashboard_data.training_config.step_interval = step_interval
-            dashboard_data.training_config.save_interval_steps = save_interval
-            dashboard_data.training_config.checkpoint_count = checkpoint_count
-            dashboard_data.training_config.save_directory = save_directory
-            dashboard_data.training_config.auto_backup = auto_backup
+            # Update dashboard data using Pydantic model
+            dashboard_data.training_config = TrainingConfig(
+                step_interval=step_interval,
+                save_interval_steps=save_interval,
+                checkpoint_count=checkpoint_count,
+                save_directory=save_directory,
+                auto_backup=auto_backup
+            )
             
             # Update the mind configuration
             config = get_config()
@@ -1381,4 +1543,10 @@ def apply_configuration(n_clicks, step_interval, save_interval, checkpoint_count
     return "System ready."
 
 if __name__ == '__main__':
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    
     app.run_server(debug=True)
