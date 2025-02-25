@@ -11,7 +11,7 @@ import torch.nn as nn
 from datetime import datetime
 import numpy as np
 
-from core.schemas import NetworkState, NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage
+from neuralchild.core.schemas import NetworkState, NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage
 
 class NeuralNetwork(nn.Module, ABC):
     """Base class for all neural networks in the mind simulation.

@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Set
 from datetime import datetime
 from enum import Enum
 
-from core.schemas import DevelopmentalStage
+from neuralchild.core.schemas import DevelopmentalStage
 
 class EmotionType(str, Enum):
     """Types of emotions experienced by the mind."""
