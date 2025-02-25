@@ -55,7 +55,8 @@ class SimulatedInput(BaseModel):
     @model_validator(mode='after')
     def ensure_has_content(cls, values):
         """Ensure at least one input type is provided."""
-        if not any(values.get(key) for key in ['visual', 'auditory', 'language']):
+        # In Pydantic v2, values is the model instance itself in 'after' mode
+        if not any([getattr(values, key, None) for key in ['visual', 'auditory', 'language']]):
             raise ValueError("At least one input type (visual, auditory, language) must be provided")
         return values
     
@@ -193,7 +194,7 @@ def generate_environmental_input() -> Dict[str, Any]:
             source="rich_environment"
         )
     
-    return simulated_input.dict(exclude_none=True)
+    return simulated_input.model_dump(exclude_none=True)
 
 def process_mother_response(response_text: str) -> Dict[str, Any]:
     """Process mother's response as sensory input.
@@ -215,13 +216,14 @@ def process_mother_response(response_text: str) -> Dict[str, Any]:
         source="mother"
     )
     
-    return mother_input.dict(exclude_none=True)
+    return mother_input.model_dump(exclude_none=True)
 
 def run_simulation():
     """Run the simulation in the background."""
     global simulation_active, dashboard_data
     
     simulation_active = True
+    dashboard_data.is_running = True
     step_count = dashboard_data.step_count
     
     # Bootstrap the mind at the start
