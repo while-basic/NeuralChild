@@ -13,7 +13,7 @@ import time
 import json
 import random
 from typing import Dict, Any, List, Optional, Union, Set
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Add project root to path to import project modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,7 +42,7 @@ class SimulatedInput(BaseModel):
     source: str = "environment"
     type: Optional[str] = None
     
-    @validator('visual', 'auditory', pre=True)
+    @field_validator('visual', 'auditory', mode='before')
     def ensure_proper_length(cls, v, values, **kwargs):
         """Ensure sensory inputs have proper length."""
         if v is not None:
@@ -52,7 +52,7 @@ class SimulatedInput(BaseModel):
                 return v + [0.0] * (64 - len(v))
         return v
     
-    @root_validator(skip_on_failure=True)
+    @model_validator(mode='after')
     def ensure_has_content(cls, values):
         """Ensure at least one input type is provided."""
         if not any(values.get(key) for key in ['visual', 'auditory', 'language']):
@@ -153,7 +153,7 @@ def bootstrap_mind(mind: Mind) -> None:
     
     # Process each bootstrap experience
     for exp in experiences:
-        mind.process_input(exp.dict(exclude_none=True))
+        mind.process_input(exp.model_dump(exclude_none=True))
     
     logger.info("Mind bootstrapped with initial experiences")
 

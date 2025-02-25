@@ -95,6 +95,9 @@ class PerceptionNetwork(NeuralNetwork):
         Returns:
             Output tensor representing processed perception
         """
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+            
         batch_size = x.size(0)
         
         # Split input into visual and auditory components
