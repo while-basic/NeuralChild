@@ -39,7 +39,7 @@ class ThoughtsNetwork(NeuralNetwork):
         
         # Thought generator network
         self.thought_generator = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),  # Changed from input_dim to hidden_dim
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(hidden_dim, hidden_dim),

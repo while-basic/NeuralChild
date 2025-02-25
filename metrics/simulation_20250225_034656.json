@@ -1,0 +1,44 @@
+{
+  "simulation_duration": 0.4348587989807129,
+  "iterations": 5,
+  "developmental_stage": "INFANT",
+  "final_state": {
+    "apparent_mood": 0.36000000000000004,
+    "energy_level": 0.85,
+    "current_focus": null,
+    "recent_emotions": [
+      {
+        "name": "joy",
+        "intensity": 0.3,
+        "timestamp": "2025-02-25T03:46:56.316178"
+      },
+      {
+        "name": "trust",
+        "intensity": 0.3,
+        "timestamp": "2025-02-25T03:46:56.316178"
+      },
+      {
+        "name": "fear",
+        "intensity": 0.3,
+        "timestamp": "2025-02-25T03:46:56.316178"
+      },
+      {
+        "name": "surprise",
+        "intensity": 0.3,
+        "timestamp": "2025-02-25T03:46:56.316178"
+      }
+    ],
+    "expressed_needs": {
+      "comfort": 0.7,
+      "stimulation": 0.8,
+      "bonding": 0.9
+    },
+    "developmental_stage": "INFANT",
+    "vocalization": "cries",
+    "age_appropriate_behaviors": [
+      "recognizes familiar faces",
+      "reaches for objects"
+    ]
+  },
+  "timestamp": "2025-02-25T03:46:56.316178"
+}
