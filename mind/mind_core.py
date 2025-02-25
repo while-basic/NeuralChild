@@ -2181,12 +2181,15 @@ class Mind:
         """
         return self.performance_metrics
     
-    def save_state(self, directory: str = "saved_models", format: str = "pytorch") -> None:
+    def save_state(self, directory: str = "saved_models", format: str = "pytorch") -> bool:
         """Save the current state of the mind and all networks.
         
         Args:
             directory: Directory to save models
             format: Model save format ("pytorch", "torchscript", "onnx")
+            
+        Returns:
+            True if saved successfully, False otherwise
         """
         try:
             os.makedirs(directory, exist_ok=True)
@@ -2203,7 +2206,10 @@ class Mind:
                 "emotional_state": {k.value: v for k, v in self.state.emotional_state.items()},
                 "energy_level": self.state.energy_level,
                 "simulation_time": self.simulation_time,
-                "developmental_milestones": self.developmental_milestones,
+                "developmental_milestones": {
+                    k: (list(v) if isinstance(v, set) else v) 
+                    for k, v in self.developmental_milestones.items()
+                },
                 "language_ability": {
                     "vocabulary_size": self.state.language_ability.vocabulary_size,
                     "sentence_complexity": self.state.language_ability.sentence_complexity,
@@ -2240,9 +2246,11 @@ class Mind:
                 json.dump(need_data, f, indent=2)
                 
             logger.info(f"Mind state saved to {directory}")
-            
+            return True
+                
         except Exception as e:
             logger.error(f"Error saving mind state: {str(e)}")
+            return False
 
     def load_state(self, directory: str = "saved_models", format: str = "pytorch") -> None:
         """Load the mind state and all networks from disk.
