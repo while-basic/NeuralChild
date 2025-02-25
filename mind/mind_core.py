@@ -11,22 +11,22 @@ import numpy as np
 import torch
 import logging
 
-from neuralchild.core.schemas import (
+from core.schemas import (
     NetworkMessage, 
     Memory, 
     Belief, 
     Need, 
     DevelopmentalStage
 )
-from neuralchild.mind.schemas import (
+from mind.schemas import (
     MindState, 
     ObservableState, 
     Emotion, 
     EmotionType,
     LanguageAbility
 )
-from neuralchild.core.neural_network import NeuralNetwork
-from neuralchild.config import config
+from core.neural_network import NeuralNetwork
+from config import config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

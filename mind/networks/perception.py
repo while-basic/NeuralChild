@@ -11,8 +11,8 @@ import random
 from datetime import datetime
 import numpy as np
 
-from neuralchild.core.neural_network import NeuralNetwork
-from neuralchild.core.schemas import NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage
+from core.neural_network import NeuralNetwork
+from core.schemas import NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage
 
 class PerceptionNetwork(NeuralNetwork):
     """
