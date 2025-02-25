@@ -28,25 +28,52 @@ import queue
 import matplotlib.pyplot as plt
 import networkx as nx
 from typing import Dict, Any, List, Optional
+import traceback
 
-# Neural Child imports
-from config import load_config, Config, get_config
-from mind.mind_core import Mind
-from mother.mother_llm import MotherLLM
-from mind.networks.consciousness import ConsciousnessNetwork
-from mind.networks.emotions import EmotionsNetwork
-from mind.networks.perception import PerceptionNetwork
-from mind.networks.thoughts import ThoughtsNetwork
-from core.schemas import DevelopmentalStage
-from mind.schemas import EmotionType, Emotion
+# Make sure base directory is in the path for imports
+base_dir = os.path.dirname(os.path.abspath(__file__))
+if base_dir not in sys.path:
+    sys.path.insert(0, base_dir)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configure logging first thing
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("neuralchild.streamlit")
 
-# Global variables
+# Now import Neural Child modules after configuring logging and warnings
+# This ordering is important to prevent import errors
+try:
+    from config import load_config, Config, get_config
+    from mind.mind_core import Mind
+    from mother.mother_llm import MotherLLM
+    from mind.networks.consciousness import ConsciousnessNetwork
+    from mind.networks.emotions import EmotionsNetwork
+    from mind.networks.perception import PerceptionNetwork
+    from mind.networks.thoughts import ThoughtsNetwork
+    from core.schemas import DevelopmentalStage
+    from mind.schemas import EmotionType, Emotion
+except ImportError as e:
+    # Better import error handling
+    logger.error(f"Failed to import Neural Child modules: {str(e)}")
+    st.error(f"""
+    ⚠️ **Import Error**: Could not load Neural Child modules.
+    
+    Error details: {str(e)}
+    
+    Please make sure:
+    1. You're running this script from the project root directory
+    2. All dependencies are installed
+    3. The Neural Child modules are in the Python path
+    """)
+    # Create empty placeholders to allow the script to load without errors
+    Mind = MotherLLM = ConsciousnessNetwork = EmotionsNetwork = None
+    PerceptionNetwork = ThoughtsNetwork = DevelopmentalStage = EmotionType = Emotion = None
+
+# Global variables with thread-safe design
+# Use thread locks for shared resources
 CONFIG_PATH = None
 running = False
+_thread_lock = threading.RLock()  # Reentrant lock for thread safety
 simulation_thread = None
 message_queue = queue.Queue()
 simulation_metrics = {
@@ -54,14 +81,25 @@ simulation_metrics = {
     "start_time": None,
     "mother_interactions": 0,
     "developmental_milestones": {},
-    "timestamped_data": []
+    "timestamped_data": [],
+    "step_interval": 0.1  # Default step interval
 }
 
 # Configure exception handling for threads
 def thread_exception_handler(args):
     """Handle exceptions in threads to avoid silent failures"""
     logger.error(f"Unhandled exception in thread: {args.exc_type}: {args.exc_value}")
-    logger.error(f"Thread traceback: {args.exc_traceback}")
+    logger.error(f"Thread traceback: {''.join(traceback.format_tb(args.exc_traceback))}")
+    
+    # Send error to message queue for UI display
+    global message_queue
+    try:
+        message_queue.put({
+            "type": "error",
+            "error": f"{args.exc_type.__name__}: {args.exc_value}"
+        })
+    except Exception as e:
+        logger.error(f"Failed to send thread error to queue: {e}")
     
 threading.excepthook = thread_exception_handler
 
@@ -95,10 +133,9 @@ def initialize_session_state():
     This ensures all required session state variables are created before
     any other part of the app tries to access them.
     """
-    # Use a dictionary to define all session state variables
-    # This is more reliable than individual checks
+    # Define all default values
     defaults = {
-        'config': get_config(),
+        'config': None,  # Will be set properly after config is loaded
         'mind': None,
         'mother': None,
         'running': False,
@@ -123,13 +160,26 @@ def initialize_session_state():
             'stage_time': datetime.now()
         },
         'network_outputs': {},
-        'thread_created': False  # Add flag to track if thread was already created
+        'thread_created': False,  # Flag to track if thread was already created
+        'error_log': [],  # Store errors for display
+        'app_initialized': False  # Track whether app is fully initialized
     }
     
-    # Initialize all session state variables
-    for key, default_value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = default_value
+    # Initialize all session state variables in one atomic operation
+    # This prevents race conditions when multiple callbacks try to initialize state
+    with _thread_lock:
+        for key, default_value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = default_value
+                
+    # Set config after other variables - this prevents inconsistent state
+    # during hot reloads
+    if 'config' not in st.session_state or st.session_state.config is None:
+        try:
+            st.session_state.config = get_config()
+        except Exception as e:
+            logger.error(f"Failed to load initial config: {e}")
+            # Don't fail - we'll load it properly later
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -148,18 +198,46 @@ def parse_arguments():
     return args
 
 def load_project_configuration(config_path=None):
-    """Load project configuration."""
+    """Load project configuration.
+    
+    Args:
+        config_path: Path to the configuration file
+        
+    Returns:
+        Loaded configuration object
+    """
     global CONFIG_PATH
-    CONFIG_PATH = config_path
     
-    # Load configuration
-    config = load_config(config_path) if config_path else load_config()
-    st.session_state.config = config
-    
-    return config
+    try:
+        CONFIG_PATH = config_path
+        
+        # Load configuration
+        config = load_config(config_path) if config_path else load_config()
+        
+        # Update session state
+        st.session_state.config = config
+        
+        return config
+    except Exception as e:
+        error_msg = f"Error loading configuration: {str(e)}"
+        logger.error(error_msg)
+        st.error(f"⚠️ {error_msg}")
+        
+        # Return default config if available, or None
+        try:
+            return get_config()
+        except:
+            return None
 
 def initialize_simulation():
-    """Initialize the Neural Child simulation."""
+    """Initialize the Neural Child simulation.
+    
+    This function creates and sets up the Mind and Mother objects
+    with all required neural networks.
+    
+    Returns:
+        Tuple of (mind, mother) objects or (None, None) on failure
+    """
     try:
         # Initialize mind and mother
         mind = Mind()
@@ -168,56 +246,66 @@ def initialize_simulation():
         # Initialize neural networks
         initialize_networks(mind, st.session_state.config)
         
-        # Store in session state
-        st.session_state.mind = mind
-        st.session_state.mother = mother
-        
-        # Reset thread created flag
-        st.session_state.thread_created = False
-        
-        # Initialize metrics
-        simulation_metrics["iterations"] = 0
-        simulation_metrics["start_time"] = datetime.now()
-        simulation_metrics["mother_interactions"] = 0
-        simulation_metrics["developmental_milestones"] = {}
-        simulation_metrics["timestamped_data"] = []
-        
-        # Clear history
-        st.session_state.interaction_history = []
-        st.session_state.metrics_history = {
-            'energy': [],
-            'mood': [],
-            'consciousness': [],
-            'interactions': [],
-            'emotions': [],
-            'needs': [],
-            'time_series': []
-        }
-        
-        st.session_state.developmental_metrics = {
-            'emotions_experienced': 0,
-            'vocabulary_learned': 0,
-            'beliefs_formed': 0,
-            'interactions_count': 0,
-            'memories_formed': 0,
-            'stage_time': datetime.now()
-        }
-        
-        # Set initial observable state
-        st.session_state.observable_state = mind.get_observable_state()
-        
-        # Initialize network outputs dictionary
-        st.session_state.network_outputs = {}
-        for name in mind.networks:
-            st.session_state.network_outputs[name] = mind.networks[name].generate_text_output().text
+        # Store in session state with thread safety
+        with _thread_lock:
+            st.session_state.mind = mind
+            st.session_state.mother = mother
+            st.session_state.thread_created = False
+            
+            # Initialize metrics
+            simulation_metrics["iterations"] = 0
+            simulation_metrics["start_time"] = datetime.now()
+            simulation_metrics["mother_interactions"] = 0
+            simulation_metrics["developmental_milestones"] = {}
+            simulation_metrics["timestamped_data"] = []
+            
+            # Clear history
+            st.session_state.interaction_history = []
+            st.session_state.metrics_history = {
+                'energy': [],
+                'mood': [],
+                'consciousness': [],
+                'interactions': [],
+                'emotions': [],
+                'needs': [],
+                'time_series': []
+            }
+            
+            st.session_state.developmental_metrics = {
+                'emotions_experienced': 0,
+                'vocabulary_learned': 0,
+                'beliefs_formed': 0,
+                'interactions_count': 0,
+                'memories_formed': 0,
+                'stage_time': datetime.now()
+            }
+            
+            # Set initial observable state
+            st.session_state.observable_state = mind.get_observable_state()
+            
+            # Initialize network outputs dictionary
+            st.session_state.network_outputs = {}
+            for name in mind.networks:
+                output = mind.networks[name].generate_text_output()
+                st.session_state.network_outputs[name] = output.text
         
         logger.info("Simulation initialized")
         return mind, mother
         
     except Exception as e:
-        # Better error handling
-        logger.error(f"Error initializing simulation: {str(e)}", exc_info=True)
-        st.error(f"Failed to initialize simulation: {str(e)}")
+        # Better error handling with traceback
+        error_msg = f"Failed to initialize simulation: {str(e)}"
+        stack_trace = traceback.format_exc()
+        logger.error(f"{error_msg}\n{stack_trace}")
+        
+        with _thread_lock:
+            st.session_state.error_log.append({
+                "timestamp": datetime.now(),
+                "error": error_msg,
+                "traceback": stack_trace
+            })
+            
+        st.error(f"⚠️ {error_msg} (see logs for details)")
         return None, None
 
 def initialize_networks(mind, config):
@@ -277,19 +365,31 @@ def initialize_networks(mind, config):
 def simulation_loop(mind, mother):
     """Main simulation loop running in a separate thread.
     
+    This function handles the core simulation steps, including advancing the
+    mind, getting mother responses, and sending updates through the message queue.
+    
     Args:
         mind: Mind object passed directly to avoid session state issues
         mother: MotherLLM object passed directly to avoid session state issues
     """
-    global running, message_queue
+    global running, message_queue, simulation_metrics
     
+    # Local variables (don't access session state)
     iteration = 0
     previous_stage = mind.state.developmental_stage
+    last_error_time = time.time()
+    
+    # Get the step interval from global metrics (thread-safe)
+    step_interval = simulation_metrics.get("step_interval", 0.1)
     
     while running:
         try:
+            # Increment iteration counter
             iteration += 1
-            simulation_metrics["iterations"] = iteration
+            
+            # Update global metrics
+            with _thread_lock:
+                simulation_metrics["iterations"] = iteration
             
             # Advance mind simulation
             mind.step()
@@ -314,23 +414,35 @@ def simulation_loop(mind, mother):
                 previous_stage = current_stage
             
             # Update message queue with the latest state
-            message_queue.put({
-                "type": "state_update",
-                "observable_state": observable_state,
-                "network_outputs": network_outputs,
-                "developmental_metrics": dev_metrics,
-                "stage_changed": stage_changed,
-                "iteration": iteration
-            })
+            try:
+                message_queue.put({
+                    "type": "state_update",
+                    "observable_state": observable_state,
+                    "network_outputs": network_outputs,
+                    "developmental_metrics": dev_metrics,
+                    "stage_changed": stage_changed,
+                    "iteration": iteration
+                }, block=False)  # Non-blocking to prevent deadlocks
+            except queue.Full:
+                # Queue is full, log warning but continue
+                if time.time() - last_error_time > 5:  # Rate limit warnings
+                    logger.warning("Message queue is full - UI updates may be delayed")
+                    last_error_time = time.time()
             
             # Check for mother response
             response = mother.observe_and_respond(mind)
             if response:
-                simulation_metrics["mother_interactions"] += 1
-                message_queue.put({
-                    "type": "mother_response",
-                    "response": response
-                })
+                # Update global metrics
+                with _thread_lock:
+                    simulation_metrics["mother_interactions"] += 1
+                
+                try:
+                    message_queue.put({
+                        "type": "mother_response",
+                        "response": response
+                    }, block=False)
+                except queue.Full:
+                    logger.warning("Message queue full - mother response update delayed")
                 
                 # Record interaction in metrics (don't access session state)
                 interaction_data = {
@@ -338,10 +450,14 @@ def simulation_loop(mind, mother):
                     "observable_state": observable_state.to_dict(),
                     "mother_response": response.to_dict()
                 }
-                message_queue.put({
-                    "type": "new_interaction",
-                    "interaction_data": interaction_data
-                })
+                
+                try:
+                    message_queue.put({
+                        "type": "new_interaction",
+                        "interaction_data": interaction_data
+                    }, block=False)
+                except queue.Full:
+                    logger.warning("Message queue full - interaction update delayed")
             
             # Update metrics
             current_time = datetime.now()
@@ -357,25 +473,48 @@ def simulation_loop(mind, mother):
                 "emotions": {e.name.value: e.intensity for e in observable_state.recent_emotions},
                 "vocalization": observable_state.vocalization
             }
-            simulation_metrics["timestamped_data"].append(metrics_snapshot)
+            
+            # Update global metrics
+            with _thread_lock:
+                simulation_metrics["timestamped_data"].append(metrics_snapshot)
             
             # Send metrics update through message queue
-            message_queue.put({
-                "type": "metrics_update",
-                "metrics_snapshot": metrics_snapshot
-            })
+            try:
+                message_queue.put({
+                    "type": "metrics_update",
+                    "metrics_snapshot": metrics_snapshot
+                }, block=False)
+            except queue.Full:
+                # Skip metrics update if queue is full
+                pass
             
             # Sleep for the configured step interval from global metrics
-            step_interval = simulation_metrics.get("step_interval", 0.1)
+            with _thread_lock:
+                step_interval = simulation_metrics.get("step_interval", 0.1)
             time.sleep(step_interval)
             
         except Exception as e:
-            logger.error(f"Error in simulation loop: {str(e)}", exc_info=True)
-            message_queue.put({
-                "type": "error",
-                "error": str(e)
-            })
-            break
+            # Log error with full traceback
+            stack_trace = traceback.format_exc()
+            logger.error(f"Error in simulation loop: {str(e)}\n{stack_trace}")
+            
+            # Send error to UI
+            try:
+                message_queue.put({
+                    "type": "error",
+                    "error": str(e),
+                    "traceback": stack_trace
+                }, block=False)
+            except:
+                # If queue is full or other error, try to log directly
+                logger.error("Failed to send error through message queue")
+            
+            # Pause before continuing to avoid error spam
+            time.sleep(1)
+            
+            # Check if we should exit the loop
+            if not running:
+                break
 
 def update_developmental_metrics(mind):
     """Extract developmental metrics from the mind.
@@ -389,108 +528,202 @@ def update_developmental_metrics(mind):
     Returns:
         Dictionary of developmental metrics
     """
-    developmental_milestones = mind.developmental_milestones
-    
-    # Create metrics dictionary to return (don't access session state)
-    metrics = {
-        'emotions_experienced': len(developmental_milestones.get('emotions_experienced', set())),
-        'vocabulary_learned': len(developmental_milestones.get('vocabulary_learned', set())),
-        'beliefs_formed': developmental_milestones.get('beliefs_formed', 0),
-        'interactions_count': developmental_milestones.get('interactions_count', 0),
-        'memories_formed': developmental_milestones.get('memories_formed', 0),
-    }
-    
-    # Return metrics to be sent through message queue
-    return metrics
+    try:
+        developmental_milestones = mind.developmental_milestones
+        
+        # Create metrics dictionary to return (don't access session state)
+        metrics = {
+            'emotions_experienced': len(developmental_milestones.get('emotions_experienced', set())),
+            'vocabulary_learned': len(developmental_milestones.get('vocabulary_learned', set())),
+            'beliefs_formed': developmental_milestones.get('beliefs_formed', 0),
+            'interactions_count': developmental_milestones.get('interactions_count', 0),
+            'memories_formed': developmental_milestones.get('memories_formed', 0),
+        }
+        
+        # Return metrics to be sent through message queue
+        return metrics
+    except Exception as e:
+        # Don't crash the whole simulation for metrics
+        logger.error(f"Error extracting developmental metrics: {e}")
+        return {}
 
 def start_simulation():
-    """Start the simulation in a separate thread."""
-    global running, simulation_thread
+    """Start the simulation in a separate thread.
     
-    if not st.session_state.mind or not st.session_state.mother:
-        initialize_simulation()
+    This function initializes the simulation if needed and starts a background
+    thread to run the simulation loop.
+    """
+    global running, simulation_thread, _thread_lock
     
-    # Get references to mind and mother before threading
-    mind = st.session_state.mind
-    mother = st.session_state.mother
-    
-    # Store the step interval in the global simulation_metrics
-    step_interval = st.session_state.config.mind.step_interval
-    simulation_metrics["step_interval"] = step_interval
-    
-    running = True
-    st.session_state.running = True
-    
-    # Start the simulation thread - pass mind and mother directly to avoid session state issues
-    simulation_thread = threading.Thread(
-        target=simulation_loop,
-        args=(mind, mother)
-    )
-    simulation_thread.daemon = True
-    simulation_thread.start()
-    
-    logger.info("Simulation started")
+    try:
+        # Ensure we have mind and mother objects
+        if not st.session_state.mind or not st.session_state.mother:
+            mind, mother = initialize_simulation()
+            if not mind or not mother:
+                st.error("⚠️ Failed to initialize simulation. Check logs for details.")
+                return
+        else:
+            mind = st.session_state.mind
+            mother = st.session_state.mother
+        
+        # Set running flag with thread safety
+        with _thread_lock:
+            running = True
+            st.session_state.running = True
+            
+            # Store the step interval in the global simulation_metrics
+            step_interval = st.session_state.config.mind.step_interval
+            simulation_metrics["step_interval"] = step_interval
+        
+        # Check if a thread already exists and is still running
+        if simulation_thread and simulation_thread.is_alive():
+            logger.warning("Simulation thread already running - will not start another")
+            return
+        
+        # Start the simulation thread - pass mind and mother directly
+        # to avoid session state issues
+        simulation_thread = threading.Thread(
+            target=simulation_loop,
+            args=(mind, mother),
+            name="NeuralChildSimulation"  # Named thread for better debugging
+        )
+        simulation_thread.daemon = True
+        simulation_thread.start()
+        
+        logger.info(f"Simulation started in thread {simulation_thread.name}")
+        
+    except Exception as e:
+        # Better error handling
+        error_msg = f"Failed to start simulation: {str(e)}"
+        stack_trace = traceback.format_exc()
+        logger.error(f"{error_msg}\n{stack_trace}")
+        st.error(f"⚠️ {error_msg}")
+        
+        # Clean up
+        with _thread_lock:
+            running = False
+            st.session_state.running = False
 
 def stop_simulation():
-    """Stop the simulation thread."""
-    global running
-    running = False
-    st.session_state.running = False
-    logger.info("Simulation stopped")
+    """Stop the simulation thread.
+    
+    This function safely shuts down the simulation thread.
+    """
+    global running, simulation_thread, _thread_lock
+    
+    try:
+        # Set running flag with thread safety
+        with _thread_lock:
+            running = False
+            st.session_state.running = False
+        
+        # Wait for thread to finish (with timeout)
+        if simulation_thread and simulation_thread.is_alive():
+            logger.info(f"Waiting for simulation thread {simulation_thread.name} to stop...")
+            simulation_thread.join(timeout=2.0)  # Wait up to 2 seconds
+            
+            if simulation_thread.is_alive():
+                logger.warning("Simulation thread did not stop gracefully within timeout")
+            else:
+                logger.info("Simulation thread stopped")
+                
+        logger.info("Simulation stopped")
+        
+    except Exception as e:
+        # Better error handling
+        error_msg = f"Error stopping simulation: {str(e)}"
+        stack_trace = traceback.format_exc()
+        logger.error(f"{error_msg}\n{stack_trace}")
+        st.error(f"⚠️ {error_msg}")
+        
+        # Force flags to ensure UI is consistent
+        with _thread_lock:
+            running = False
+            st.session_state.running = False
 
 def restart_simulation():
-    """Restart the simulation with the current configuration."""
+    """Restart the simulation with the current configuration.
+    
+    This is a wrapper that coordinates stopping and starting the simulation.
+    """
     stop_simulation()
     time.sleep(0.5)  # Allow thread to stop
-    initialize_simulation()
-    start_simulation()
-    logger.info("Simulation restarted")
+    mind, mother = initialize_simulation()
+    if mind and mother:
+        start_simulation()
+        logger.info("Simulation restarted")
+    else:
+        raise RuntimeError("Failed to initialize simulation for restart")
 
 def process_message_queue():
-    """Process messages from the simulation thread."""
-    global message_queue
+    """Process messages from the simulation thread.
     
-    # Process all available messages
-    while not message_queue.empty():
+    This function handles updates sent from the simulation thread via the message queue,
+    updating the Streamlit UI accordingly.
+    """
+    global message_queue, _thread_lock
+    
+    # Process all available messages with a maximum to prevent UI freezing
+    message_count = 0
+    max_messages_per_update = 20  # Limit messages processed per UI update
+    
+    while not message_queue.empty() and message_count < max_messages_per_update:
+        message_count += 1
+        
         try:
-            message = message_queue.get_nowait()
+            # Get message with timeout to avoid blocking
+            try:
+                message = message_queue.get(timeout=0.1)
+            except queue.Empty:
+                break
+                
             message_type = message.get("type")
             
             if message_type == "state_update":
                 # Update observable state
-                st.session_state.observable_state = message.get("observable_state")
-                
-                # Update network outputs
-                st.session_state.network_outputs = message.get("network_outputs", {})
-                
-                # Update developmental metrics if provided
-                if "developmental_metrics" in message:
-                    metrics = message.get("developmental_metrics")
+                with _thread_lock:
+                    st.session_state.observable_state = message.get("observable_state")
                     
-                    # Update the metrics in the session state
-                    for key, value in metrics.items():
-                        if key in st.session_state.developmental_metrics:
-                            st.session_state.developmental_metrics[key] = value
-                
-                    # If stage changed, update the stage time
-                    if message.get("stage_changed", False):
-                        if "stage_time" in metrics:
-                            # Convert ISO string back to datetime
-                            stage_time = datetime.fromisoformat(metrics["stage_time"])
-                            st.session_state.developmental_metrics["stage_time"] = stage_time
+                    # Update network outputs
+                    if "network_outputs" in message:
+                        st.session_state.network_outputs = message.get("network_outputs", {})
+                    
+                    # Update developmental metrics if provided
+                    if "developmental_metrics" in message:
+                        metrics = message.get("developmental_metrics")
+                        
+                        # Update the metrics in the session state
+                        for key, value in metrics.items():
+                            if key in st.session_state.developmental_metrics:
+                                st.session_state.developmental_metrics[key] = value
+                    
+                        # If stage changed, update the stage time
+                        if message.get("stage_changed", False):
+                            if "stage_time" in metrics:
+                                # Convert ISO string back to datetime
+                                try:
+                                    stage_time = datetime.fromisoformat(metrics["stage_time"])
+                                    st.session_state.developmental_metrics["stage_time"] = stage_time
+                                except (ValueError, TypeError) as e:
+                                    logger.warning(f"Failed to parse stage time: {e}")
                 
                 # Update metrics history with the latest state
                 if st.session_state.observable_state:
                     update_metrics_history(st.session_state.observable_state)
                 
             elif message_type == "mother_response":
-                st.session_state.mother_response = message.get("response")
+                with _thread_lock:
+                    st.session_state.mother_response = message.get("response")
                 
             elif message_type == "new_interaction":
                 # Add to interaction history
                 interaction_data = message.get("interaction_data")
                 if interaction_data:
-                    st.session_state.interaction_history.append(interaction_data)
+                    with _thread_lock:
+                        st.session_state.interaction_history.append(interaction_data)
+                        # Keep history to a reasonable size
+                        if len(st.session_state.interaction_history) > 100:
+                            st.session_state.interaction_history = st.session_state.interaction_history[-100:]
                 
             elif message_type == "metrics_update":
                 # Process metrics update
@@ -499,14 +732,45 @@ def process_message_queue():
                     update_metrics_from_snapshot(metrics_snapshot)
                 
             elif message_type == "error":
-                st.error(f"Simulation error: {message.get('error')}")
-                stop_simulation()
+                error_message = message.get("error", "Unknown error")
+                traceback_text = message.get("traceback", "")
                 
-        except queue.Empty:
-            break
+                # Log error
+                logger.error(f"Simulation error: {error_message}\n{traceback_text}")
+                
+                # Show error in UI
+                st.error(f"⚠️ Simulation error: {error_message}")
+                
+                # Store error in session state
+                with _thread_lock:
+                    st.session_state.error_log.append({
+                        "timestamp": datetime.now(),
+                        "error": error_message,
+                        "traceback": traceback_text
+                    })
+                    
+                    # Limit error log size
+                    if len(st.session_state.error_log) > 20:
+                        st.session_state.error_log = st.session_state.error_log[-20:]
+                
+                # Consider stopping simulation on critical errors
+                if "critical" in message and message["critical"]:
+                    stop_simulation()
+                
         except Exception as e:
-            logger.error(f"Error processing message: {str(e)}", exc_info=True)
-            st.error(f"Error updating dashboard: {str(e)}")
+            # Catch any errors in message processing
+            stack_trace = traceback.format_exc()
+            logger.error(f"Error processing message: {str(e)}\n{stack_trace}")
+            
+            try:
+                st.error(f"Error updating dashboard: {str(e)}")
+            except:
+                # Fallback if even the error display fails
+                pass
+                
+    # Show a message if we hit the processing limit
+    if message_count >= max_messages_per_update and not message_queue.empty():
+        logger.info(f"Processed {message_count} messages, queue still has items")
 
 def update_metrics_from_snapshot(snapshot):
     """Update metrics history from a snapshot.
@@ -514,35 +778,48 @@ def update_metrics_from_snapshot(snapshot):
     Args:
         snapshot: Dictionary containing metrics snapshot
     """
-    # Make sure we have the required keys
-    if not all(k in snapshot for k in ["timestamp", "energy", "mood", "consciousness"]):
-        return
-        
-    # Add current timestamp
-    current_time = snapshot["timestamp"]
-    st.session_state.metrics_history['time_series'].append(current_time)
-    
-    # Add energy level
-    st.session_state.metrics_history['energy'].append(snapshot["energy"])
-    
-    # Add mood
-    st.session_state.metrics_history['mood'].append(snapshot["mood"])
-    
-    # Add consciousness level
-    st.session_state.metrics_history['consciousness'].append(snapshot["consciousness"])
-    
-    # Add interaction count
-    interactions = simulation_metrics.get("mother_interactions", 0)
-    st.session_state.metrics_history['interactions'].append(interactions)
-    
-    # Process emotions
-    if "emotions" in snapshot:
-        emotions_dict = snapshot["emotions"]
-        st.session_state.metrics_history['emotions'].append(emotions_dict)
-    
-    # Process needs
-    if "needs" in snapshot:
-        st.session_state.metrics_history['needs'].append(snapshot["needs"])
+    try:
+        with _thread_lock:
+            # Make sure we have the required keys
+            if not all(k in snapshot for k in ["timestamp", "energy", "mood", "consciousness"]):
+                return
+                
+            # Add current timestamp
+            current_time = snapshot["timestamp"]
+            st.session_state.metrics_history['time_series'].append(current_time)
+            
+            # Add energy level
+            st.session_state.metrics_history['energy'].append(snapshot["energy"])
+            
+            # Add mood
+            st.session_state.metrics_history['mood'].append(snapshot["mood"])
+            
+            # Add consciousness level
+            st.session_state.metrics_history['consciousness'].append(snapshot["consciousness"])
+            
+            # Add interaction count
+            interactions = simulation_metrics.get("mother_interactions", 0)
+            st.session_state.metrics_history['interactions'].append(interactions)
+            
+            # Process emotions
+            if "emotions" in snapshot:
+                emotions_dict = snapshot["emotions"]
+                st.session_state.metrics_history['emotions'].append(emotions_dict)
+            
+            # Process needs
+            if "needs" in snapshot:
+                st.session_state.metrics_history['needs'].append(snapshot["needs"])
+                
+            # Limit history length to prevent memory issues
+            max_history = 1000  # Maximum number of data points to keep
+            if len(st.session_state.metrics_history['time_series']) > max_history:
+                # Trim all metrics history lists
+                for key in st.session_state.metrics_history:
+                    if isinstance(st.session_state.metrics_history[key], list):
+                        st.session_state.metrics_history[key] = st.session_state.metrics_history[key][-max_history:]
+                        
+    except Exception as e:
+        logger.error(f"Error updating metrics from snapshot: {str(e)}", exc_info=True)
 
 def update_metrics_history(observable_state):
     """Update the metrics history with the latest state."""
@@ -679,23 +956,39 @@ def display_main_dashboard():
     with col1:
         # Simulation controls
         if not st.session_state.running:
-            if st.button("▶️ Start Simulation", key="start_btn", use_container_width=True):
+            start_btn = st.button("▶️ Start Simulation", key="start_btn", use_container_width=True)
+            if start_btn:
                 try:
                     start_simulation()
                 except Exception as e:
                     st.error(f"Failed to start simulation: {str(e)}")
                     logger.error(f"Error starting simulation: {str(e)}", exc_info=True)
         else:
-            if st.button("⏹️ Stop Simulation", key="stop_btn", use_container_width=True):
+            stop_btn = st.button("⏹️ Stop Simulation", key="stop_btn", use_container_width=True)
+            if stop_btn:
                 try:
                     stop_simulation()
                 except Exception as e:
                     st.error(f"Failed to stop simulation: {str(e)}")
                     logger.error(f"Error stopping simulation: {str(e)}", exc_info=True)
                 
-        if st.button("🔄 Restart Simulation", key="restart_btn", use_container_width=True):
+        restart_btn = st.button("🔄 Restart Simulation", key="restart_btn", use_container_width=True)
+        if restart_btn:
             try:
-                restart_simulation()
+                # Stop simulation first if it's running
+                if st.session_state.running:
+                    stop_simulation()
+                    # Small delay to ensure thread stops
+                    time.sleep(0.5)
+                
+                # Initialize and start
+                mind, mother = initialize_simulation()
+                if mind and mother:
+                    start_simulation()
+                    st.success("🚀 Simulation restarted successfully!")
+                    logger.info("Simulation restarted")
+                else:
+                    st.error("⚠️ Failed to restart simulation")
             except Exception as e:
                 st.error(f"Failed to restart simulation: {str(e)}")
                 logger.error(f"Error restarting simulation: {str(e)}", exc_info=True)
@@ -1486,7 +1779,7 @@ def display_configuration():
 def main():
     """Main function for the Streamlit app."""
     try:
-        # Set page config
+        # Set page config first thing - must be at top of script
         st.set_page_config(
             page_title="Neural Child Brain Simulation",
             page_icon="🧠",
@@ -1494,26 +1787,76 @@ def main():
             initial_sidebar_state="expanded"
         )
         
-        # Parse command line arguments
-        args = parse_arguments()
-        
         # Initialize session state - must happen before anything else!
         initialize_session_state()
         
+        # Parse command line arguments
+        args = parse_arguments()
+        
         # Load project configuration
-        load_project_configuration(args.config)
+        config = load_project_configuration(args.config)
+        if not config:
+            st.error("⚠️ Failed to load configuration. Using defaults.")
+            config = get_config()  # Fallback to default config
         
         # Display the dashboard
         display_dashboard()
         
-        # Process message queue from simulation thread
+        # Process message queue if simulation is running
         if st.session_state.running:
             process_message_queue()
+            
+        # Mark app as initialized
+        st.session_state.app_initialized = True
     
     except Exception as e:
-        # Provide better error handling for debugging
-        st.error(f"An error occurred: {str(e)}")
-        logger.error(f"Application error: {str(e)}", exc_info=True)
+        # Global error handler for the entire app
+        error_msg = f"Application error: {str(e)}"
+        stack_trace = traceback.format_exc()
+        logger.error(f"{error_msg}\n{stack_trace}")
+        
+        # Display user-friendly error
+        st.error(f"""
+        ## ⚠️ Application Error
+        
+        Something went wrong with the Neural Child simulation.
+        
+        **Error details:** {str(e)}
+        
+        Please check the logs for more information or try restarting the application.
+        """)
+        
+        # Add error information button
+        if st.button("Show Detailed Error Information"):
+            st.code(stack_trace, language="python")
+            
+        # Show debugging information in expandable section
+        with st.expander("Debugging Information"):
+            st.write("### Session State Variables")
+            for key in st.session_state:
+                # Don't show large objects
+                if key in ["mind", "mother", "interaction_history"]:
+                    st.write(f"**{key}**: [large object]")
+                else:
+                    st.write(f"**{key}**: {st.session_state[key]}")
+
+# Ensure we check for PyTorch import warnings
+try:
+    import torch
+    logger.info(f"PyTorch version: {torch.__version__}")
+except ImportError:
+    logger.warning("PyTorch not found - some neural network features may not work")
+except Exception as e:
+    logger.warning(f"PyTorch import issue: {e}")
+    
+# Clean up any existing threads on reload
+if 'simulation_thread' in globals() and simulation_thread and simulation_thread.is_alive():
+    logger.info("Cleaning up existing thread on reload")
+    try:
+        running = False
+        simulation_thread.join(timeout=1.0)
+    except:
+        pass
 
 if __name__ == "__main__":
     main()
