@@ -2181,19 +2181,20 @@ class Mind:
         """
         return self.performance_metrics
     
-    def save_state(self, directory: str = "saved_models") -> None:
+    def save_state(self, directory: str = "saved_models", format: str = "pytorch") -> None:
         """Save the current state of the mind and all networks.
         
         Args:
             directory: Directory to save models
+            format: Model save format ("pytorch", "torchscript", "onnx")
         """
         try:
             os.makedirs(directory, exist_ok=True)
             
             # Save each network
             for name, network in self.networks.items():
-                network_path = os.path.join(directory, f"{name}.pt")
-                network.save_model(network_path)
+                network_path = os.path.join(directory, f"{name}.{format}")
+                network.save_model(network_path, format=format)
             
             # Save mind state
             mind_state = {
@@ -2243,7 +2244,7 @@ class Mind:
         except Exception as e:
             logger.error(f"Error saving mind state: {str(e)}")
 
-    def load_state(self, directory: str = "saved_models") -> bool:
+    def load_state(self, directory: str = "saved_models", format: str = "pytorch") -> None:
         """Load the mind state and all networks from disk.
         
         Args:

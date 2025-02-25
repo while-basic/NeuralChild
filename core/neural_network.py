@@ -6,7 +6,7 @@ growth through experience.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, Tuple, Set, Union
+from typing import Dict, Any, Optional, List, Tuple, Set, Union, Literal
 import torch
 import torch.nn as nn
 from datetime import datetime
@@ -486,16 +486,43 @@ class NeuralNetwork(nn.Module, ABC):
         """
         return self.state.developmental_weights[self.developmental_stage]
     
-    def save_model(self, path: str) -> None:
+    def save_model(self, path: str, format: Literal["pytorch", "torchscript", "onnx"] = "pytorch") -> bool:
         """Save the neural network model to disk.
         
         Args:
             path: Path to save the model
+            format: Format to save the model in ("pytorch", "torchscript", "onnx")
+            
+        Returns:
+            True if saved successfully, False otherwise
         """
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            
+            if format == "pytorch":
+                return self._save_pytorch(path)
+            elif format == "torchscript":
+                return self._save_torchscript(path)
+            elif format == "onnx":
+                return self._save_onnx(path)
+            else:
+                logger.error(f"Unsupported save format: {format}")
+                return False
+        except Exception as e:
+            logger.error(f"Error saving model: {str(e)}")
+            return False
+
+    def _save_pytorch(self, path: str) -> bool:
+        """Save model in PyTorch format.
         
-        # Save PyTorch model weights
-        torch.save({
+        Args:
+            path: Path to save the model
+            
+        Returns:
+            True if saved successfully
+        """
+        # Create complete metadata dict
+        metadata = {
             'model_state_dict': self.state_dict(),
             'developmental_stage': self.developmental_stage.value,
             'state_parameters': self.state.parameters,
@@ -506,36 +533,137 @@ class NeuralNetwork(nn.Module, ABC):
             'growth_history': [event.to_dict() for event in self.growth_history],
             'input_dim': self.input_dim,
             'output_dim': self.output_dim,
-        }, path)
-        
-        # Save additional metadata
-        metadata_path = path + ".json"
-        metadata = {
             'name': self.name,
             'type': self.__class__.__name__,
-            'developmental_stage': self.developmental_stage.name,
-            'input_dim': self.input_dim,
-            'output_dim': self.output_dim,
-            'experience_count': self.experience_count,
-            'growth_metrics': self.growth_metrics.to_dict(),
             'save_time': datetime.now().isoformat()
         }
         
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        # Save with optimized settings
+        torch.save(metadata, path, _use_new_zipfile_serialization=True)
+        logger.info(f"Model saved in PyTorch format to {path}")
+        return True
+        
+    def _save_torchscript(self, path: str) -> bool:
+        """Save model in TorchScript format.
+        
+        Args:
+            path: Path to save the model
+            
+        Returns:
+            True if saved successfully
+        """
+        try:
+            # Create a sample input tensor for tracing
+            sample_input = torch.zeros(1, self.input_dim)
+            
+            # Create TorchScript model through tracing
+            scripted_model = torch.jit.trace(self, sample_input)
+            
+            # Save the TorchScript model
+            scripted_model.save(path)
+            
+            # Save metadata separately
+            metadata_path = path + ".metadata.pt"
+            torch.save({
+                'developmental_stage': self.developmental_stage.value,
+                'state_parameters': self.state.parameters,
+                'growth_metrics': self.growth_metrics.to_dict(),
+                'input_dim': self.input_dim,
+                'output_dim': self.output_dim,
+                'name': self.name,
+                'type': self.__class__.__name__,
+                'save_time': datetime.now().isoformat()
+            }, metadata_path)
+            
+            logger.info(f"Model saved in TorchScript format to {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error creating TorchScript model: {str(e)}")
+            return False
+            
+    def _save_onnx(self, path: str) -> bool:
+        """Save model in ONNX format.
+        
+        Args:
+            path: Path to save the model
+            
+        Returns:
+            True if saved successfully
+        """
+        try:
+            # Create a sample input tensor
+            dummy_input = torch.zeros(1, self.input_dim)
+            
+            # Export to ONNX
+            torch.onnx.export(
+                self,                  # model being run
+                dummy_input,           # model input
+                path,                  # where to save the model
+                export_params=True,    # store the trained parameter weights
+                opset_version=11,      # the ONNX version
+                do_constant_folding=True,  # optimization
+                input_names=['input'],     # the model's input names
+                output_names=['output'],   # the model's output names
+                dynamic_axes={'input': {0: 'batch_size'},    # variable length axes
+                              'output': {0: 'batch_size'}}
+            )
+            
+            # Save metadata separately
+            metadata_path = path + ".metadata.pt"
+            torch.save({
+                'developmental_stage': self.developmental_stage.value,
+                'state_parameters': self.state.parameters,
+                'growth_metrics': self.growth_metrics.to_dict(),
+                'input_dim': self.input_dim,
+                'output_dim': self.output_dim,
+                'name': self.name,
+                'type': self.__class__.__name__,
+                'save_time': datetime.now().isoformat()
+            }, metadata_path)
+            
+            logger.info(f"Model saved in ONNX format to {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error exporting to ONNX: {str(e)}")
+            return False
 
-    def load_model(self, path: str) -> bool:
+    def load_model(self, path: str, format: Literal["pytorch", "torchscript", "onnx"] = "pytorch") -> bool:
         """Load the neural network model from disk.
         
         Args:
             path: Path to load the model from
+            format: Format the model was saved in
             
         Returns:
             True if loaded successfully, False otherwise
         """
         if not os.path.exists(path):
+            logger.error(f"Model file not found: {path}")
             return False
         
+        try:
+            if format == "pytorch":
+                return self._load_pytorch(path)
+            elif format == "torchscript":
+                return self._load_torchscript(path)
+            elif format == "onnx":
+                return self._load_onnx(path)
+            else:
+                logger.error(f"Unsupported load format: {format}")
+                return False
+        except Exception as e:
+            logger.error(f"Error loading model: {str(e)}")
+            return False
+            
+    def _load_pytorch(self, path: str) -> bool:
+        """Load model from PyTorch format.
+        
+        Args:
+            path: Path to load the model from
+            
+        Returns:
+            True if loaded successfully
+        """
         try:
             checkpoint = torch.load(path)
             
@@ -549,7 +677,8 @@ class NeuralNetwork(nn.Module, ABC):
                     # Network dimensions changed, might need special handling in subclasses
                     
             # Load model weights
-            self.load_state_dict(checkpoint['model_state_dict'])
+            if 'model_state_dict' in checkpoint:
+                self.load_state_dict(checkpoint['model_state_dict'])
             
             # Restore state
             if 'developmental_stage' in checkpoint:
@@ -573,32 +702,120 @@ class NeuralNetwork(nn.Module, ABC):
                         setattr(self.growth_metrics, key, value)
                         
             if 'growth_history' in checkpoint:
-                self.growth_history = []
-                for event_dict in checkpoint['growth_history']:
-                    try:
-                        # Convert stage name to enum
-                        stage_name = event_dict.pop('developmental_stage')
-                        stage = DevelopmentalStage[stage_name]
-                        
-                        # Convert timestamp string to datetime
-                        timestamp_str = event_dict.pop('timestamp')
-                        timestamp = datetime.fromisoformat(timestamp_str)
-                        
-                        # Create and add the event
-                        event = NeuralGrowthRecord(
-                            timestamp=timestamp,
-                            developmental_stage=stage,
-                            **event_dict
-                        )
-                        self.growth_history.append(event)
-                    except Exception as e:
-                        logger.warning(f"Error restoring growth event: {str(e)}")
+                self._restore_growth_history(checkpoint['growth_history'])
                 
+            logger.info(f"Model loaded from PyTorch format: {path}")
             return True
             
         except Exception as e:
             logger.error(f"Error loading model from {path}: {str(e)}")
             return False
+            
+    def _load_torchscript(self, path: str) -> bool:
+        """Load model from TorchScript format.
+        
+        Args:
+            path: Path to load the model from
+            
+        Returns:
+            True if loaded successfully
+        """
+        try:
+            # Load TorchScript model
+            scripted_model = torch.jit.load(path)
+            
+            # This is tricky since we can't directly extract parameters
+            # from a TorchScript model into our current instance.
+            # We'll need to copy parameters manually or handle this specially
+            
+            # For now, load metadata from companion file
+            metadata_path = path + ".metadata.pt"
+            if os.path.exists(metadata_path):
+                metadata = torch.load(metadata_path)
+                
+                # Restore basic attributes from metadata
+                if 'developmental_stage' in metadata:
+                    self.developmental_stage = DevelopmentalStage(metadata['developmental_stage'])
+                
+                if 'state_parameters' in metadata:
+                    self.state.parameters = metadata['state_parameters']
+                    
+                if 'growth_metrics' in metadata:
+                    for key, value in metadata['growth_metrics'].items():
+                        if hasattr(self.growth_metrics, key):
+                            setattr(self.growth_metrics, key, value)
+            
+            logger.info(f"Model metadata loaded from TorchScript format: {path}")
+            logger.warning("Note: TorchScript loading only restores metadata, not model parameters.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error loading TorchScript model from {path}: {str(e)}")
+            return False
+            
+    def _load_onnx(self, path: str) -> bool:
+        """Load model from ONNX format.
+        
+        Args:
+            path: Path to load the model from
+            
+        Returns:
+            True if loaded successfully
+        """
+        # ONNX models typically require ONNX Runtime to execute
+        # For PyTorch, we usually load metadata but execute via ONNX Runtime
+        try:
+            # Load metadata from companion file
+            metadata_path = path + ".metadata.pt"
+            if os.path.exists(metadata_path):
+                metadata = torch.load(metadata_path)
+                
+                # Restore basic attributes from metadata
+                if 'developmental_stage' in metadata:
+                    self.developmental_stage = DevelopmentalStage(metadata['developmental_stage'])
+                
+                if 'state_parameters' in metadata:
+                    self.state.parameters = metadata['state_parameters']
+                    
+                if 'growth_metrics' in metadata:
+                    for key, value in metadata['growth_metrics'].items():
+                        if hasattr(self.growth_metrics, key):
+                            setattr(self.growth_metrics, key, value)
+            
+            logger.info(f"Model metadata loaded from ONNX format: {path}")
+            logger.warning("Note: ONNX loading only restores metadata. Use ONNX Runtime for execution.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error loading ONNX model from {path}: {str(e)}")
+            return False
+        
+    def _restore_growth_history(self, growth_history_data: List[Dict[str, Any]]) -> None:
+        """Restore growth history from serialized data.
+        
+        Args:
+            growth_history_data: List of serialized growth events
+        """
+        self.growth_history = []
+        for event_dict in growth_history_data:
+            try:
+                # Convert stage name to enum
+                stage_name = event_dict.pop('developmental_stage')
+                stage = DevelopmentalStage[stage_name]
+                
+                # Convert timestamp string to datetime
+                timestamp_str = event_dict.pop('timestamp')
+                timestamp = datetime.fromisoformat(timestamp_str)
+                
+                # Create and add the event
+                event = NeuralGrowthRecord(
+                    timestamp=timestamp,
+                    developmental_stage=stage,
+                    **event_dict
+                )
+                self.growth_history.append(event)
+            except Exception as e:
+                logger.warning(f"Error restoring growth event: {str(e)}")
         
     def batch_learning(self, inputs: List[torch.Tensor], targets: Optional[List[torch.Tensor]] = None) -> float:
         """Learn from a batch of experiences.
