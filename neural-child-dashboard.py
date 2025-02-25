@@ -1198,8 +1198,8 @@ def update_milestones(n_intervals):
     Input("update-interval", "n_intervals")
 )
 def update_beliefs(n_intervals):
-    # Get beliefs data
-    beliefs = mind.beliefs
+    # Get beliefs data - FIXED
+    beliefs = list(mind.belief_network.beliefs.values())
     
     if not beliefs:
         return html.Div("No beliefs have been formed yet.")
@@ -1250,8 +1250,8 @@ def update_beliefs(n_intervals):
     Input("update-interval", "n_intervals")
 )
 def update_needs(n_intervals):
-    # Get needs data
-    needs = mind.needs
+    # Get needs data - FIXED
+    needs = mind.need_system.needs
     
     if not needs:
         return html.Div("No needs data available.")

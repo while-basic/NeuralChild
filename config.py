@@ -59,6 +59,7 @@ class MindConfig(BaseModel):
     need_update_interval: float = Field(default=5.0, ge=0.1)  # seconds
     memory_consolidation_interval: float = Field(default=30.0, ge=1.0)  # seconds
     development_check_interval: float = Field(default=60.0, ge=5.0)  # seconds
+    network_growth_check_interval: float = Field(default=120.0, ge=10.0)  # seconds - add this line!
     
     # Network configuration
     networks: Dict[str, Dict[str, Any]] = Field(default_factory=lambda: {

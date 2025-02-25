@@ -1571,7 +1571,7 @@ class Mind:
         current_time = datetime.now()
         
         # Only check periodically
-        if (current_time - self.last_network_growth_check).total_seconds() < check_interval:
+        if (current_time - self.last_network_growth_check).total_seconds() < config.mind.network_growth_check_interval:
             return
             
         # Get growth rate for current stage
