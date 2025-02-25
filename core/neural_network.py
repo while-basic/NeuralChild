@@ -176,3 +176,162 @@ class NeuralNetwork(nn.Module, ABC):
             Float representing developmental capacity (0-1)
         """
         return self.state.developmental_weights[self.developmental_stage]
+    
+    def save_model(self, path: str) -> None:
+        """Save the neural network model to disk.
+        
+        Args:
+            path: Path to save the model
+        """
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        
+        # Save PyTorch model weights
+        torch.save({
+            'model_state_dict': self.state_dict(),
+            'developmental_stage': self.developmental_stage.value,
+            'state_parameters': self.state.parameters,
+            'learning_rate': self.learning_rate,
+            'experience_count': self.experience_count,
+            'last_activations': self.last_activations,
+        }, path)
+
+    def load_model(self, path: str) -> bool:
+        """Load the neural network model from disk.
+        
+        Args:
+            path: Path to load the model from
+            
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        if not os.path.exists(path):
+            return False
+        
+        try:
+            checkpoint = torch.load(path)
+            
+            # Load model weights
+            self.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Restore state
+            if 'developmental_stage' in checkpoint:
+                self.developmental_stage = DevelopmentalStage(checkpoint['developmental_stage'])
+            
+            if 'state_parameters' in checkpoint:
+                self.state.parameters = checkpoint['state_parameters']
+                
+            if 'learning_rate' in checkpoint:
+                self.learning_rate = checkpoint['learning_rate']
+                
+            if 'experience_count' in checkpoint:
+                self.experience_count = checkpoint['experience_count']
+                
+            if 'last_activations' in checkpoint:
+                self.last_activations = checkpoint['last_activations']
+                
+            return True
+            
+        except Exception as e:
+            return False
+        
+    def batch_learning(self, inputs: List[torch.Tensor], targets: Optional[List[torch.Tensor]] = None) -> float:
+        """Learn from a batch of experiences.
+        
+        Args:
+            inputs: List of input tensors
+            targets: Optional list of target tensors
+            
+        Returns:
+            Average loss
+        """
+        batch_size = len(inputs)
+        if batch_size == 0:
+            return 0.0
+            
+        # Stack inputs
+        input_batch = torch.stack(inputs)
+        
+        # Forward pass
+        outputs = self.forward(input_batch)
+        
+        # If no targets provided, create pseudo-targets
+        if targets is None:
+            values, _ = torch.max(outputs, dim=1, keepdim=True)
+            target_batch = torch.where(outputs > 0.8 * values, outputs * 1.1, outputs * 0.9)
+        else:
+            target_batch = torch.stack(targets)
+        
+        # Compute loss
+        criterion = nn.MSELoss()
+        loss = criterion.forward(outputs, target_batch)
+        
+        # Scale learning by developmental stage
+        effective_lr = self.learning_rate * self.state.developmental_weights[self.developmental_stage]
+        
+        # Backward pass and update weights
+        if self.training and effective_lr > 0:
+            self.zero_grad()
+            loss.backward()
+            
+            with torch.no_grad():
+                for param in self.parameters():
+                    if param.grad is not None:
+                        param -= effective_lr * param.grad
+        
+        return loss.item()
+    
+    def evaluate(self, test_inputs: List[torch.Tensor], test_targets: Optional[List[torch.Tensor]] = None) -> Dict[str, float]:
+        """Evaluate model performance on test data.
+        
+        Args:
+            test_inputs: List of test input tensors
+            test_targets: Optional list of test target tensors
+            
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        # Store original training state
+        was_training = self.training
+        self.eval()  # Set to evaluation mode
+        
+        results = {}
+        
+        try:
+            with torch.no_grad():
+                # Process in batches if large
+                batch_size = 32
+                num_batches = (len(test_inputs) + batch_size - 1) // batch_size
+                
+                total_loss = 0.0
+                
+                for i in range(num_batches):
+                    start_idx = i * batch_size
+                    end_idx = min((i + 1) * batch_size, len(test_inputs))
+                    
+                    batch_inputs = test_inputs[start_idx:end_idx]
+                    input_batch = torch.stack(batch_inputs)
+                    
+                    # Forward pass
+                    outputs = self.forward(input_batch)
+                    
+                    # Compute loss if targets provided
+                    if test_targets is not None:
+                        batch_targets = test_targets[start_idx:end_idx]
+                        target_batch = torch.stack(batch_targets)
+                        
+                        criterion = nn.MSELoss()
+                        loss = criterion.forward(outputs, target_batch)
+                        total_loss += loss.item() * len(batch_inputs)
+                
+                if test_targets is not None:
+                    results["average_loss"] = total_loss / len(test_inputs)
+                    
+                # Add other metrics as needed
+                results["average_activation"] = outputs.mean().item()
+                
+        finally:
+            # Restore original training state
+            if was_training:
+                self.train()
+                
+        return results

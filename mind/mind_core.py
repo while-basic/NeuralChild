@@ -713,3 +713,90 @@ class Mind:
             behaviors = random.sample(mature_behaviors, random.randint(1, 2))
             
         return behaviors
+    
+    def save_state(self, directory: str = "saved_models") -> None:
+        """Save the current state of the mind and all networks.
+        
+        Args:
+            directory: Directory to save models
+        """
+        try:
+            os.makedirs(directory, exist_ok=True)
+            
+            # Save each network
+            for name, network in self.networks.items():
+                network_path = os.path.join(directory, f"{name}.pt")
+                network.save_model(network_path)
+            
+            # Save mind state
+            mind_state = {
+                "developmental_stage": self.state.developmental_stage.value,
+                "consciousness_level": self.state.consciousness_level,
+                "emotional_state": {k.value: v for k, v in self.state.emotional_state.items()},
+                "energy_level": self.state.energy_level,
+                "simulation_time": self.simulation_time,
+                "developmental_milestones": self.developmental_milestones,
+                "needs": {k: {"intensity": v.intensity, "satisfaction_level": v.satisfaction_level} 
+                        for k, v in self.needs.items()},
+                "memory_count": len(self.long_term_memory),
+                "belief_count": len(self.beliefs)
+            }
+            
+            with open(os.path.join(directory, "mind_state.json"), "w") as f:
+                json.dump(mind_state, f, indent=2)
+                
+            logger.info(f"Mind state saved to {directory}")
+            
+        except Exception as e:
+            logger.error(f"Error saving mind state: {str(e)}")
+
+    def load_state(self, directory: str = "saved_models") -> bool:
+        """Load the mind state and all networks from disk.
+        
+        Args:
+            directory: Directory to load models from
+            
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        if not os.path.exists(directory):
+            logger.warning(f"Save directory not found: {directory}")
+            return False
+            
+        try:
+            # Load mind state
+            mind_state_path = os.path.join(directory, "mind_state.json")
+            if os.path.exists(mind_state_path):
+                with open(mind_state_path, "r") as f:
+                    mind_state = json.load(f)
+                    
+                # Restore core state attributes
+                if "developmental_stage" in mind_state:
+                    self.state.developmental_stage = DevelopmentalStage(mind_state["developmental_stage"])
+                    
+                if "consciousness_level" in mind_state:
+                    self.state.consciousness_level = mind_state["consciousness_level"]
+                    
+                if "energy_level" in mind_state:
+                    self.state.energy_level = mind_state["energy_level"]
+                    
+                if "simulation_time" in mind_state:
+                    self.simulation_time = mind_state["simulation_time"]
+                    
+                # Load networks
+                for name, network in self.networks.items():
+                    network_path = os.path.join(directory, f"{name}.pt")
+                    if os.path.exists(network_path):
+                        success = network.load_model(network_path)
+                        if not success:
+                            logger.warning(f"Failed to load network: {name}")
+                    else:
+                        logger.warning(f"Network model not found: {name}")
+                        
+                logger.info(f"Mind state loaded from {directory}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error loading mind state: {str(e)}")
+            
+        return False
