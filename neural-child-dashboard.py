@@ -1577,4 +1577,4 @@ if __name__ == '__main__':
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     
-    app.run_server(debug=True)
+    app.run_server(debug=True, port=8051)

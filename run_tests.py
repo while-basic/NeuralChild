@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
-Run script for the Neural Child Dashboard.
+Run script for Neural Child tests.
 
-This script provides a convenient way to start the Neural Child Dashboard
-with proper environment setup and error handling.
+This script provides a convenient way to run the test suite for the Neural Child project
+with proper environment setup and reporting.
 """
 
 import os
@@ -17,13 +17,12 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("run_dashboard")
+logger = logging.getLogger("run_tests")
 
 def check_dependencies():
-    """Check if all required packages are installed."""
+    """Check if all required packages for testing are installed."""
     required_packages = [
-        "torch", "numpy", "pydantic", "dash", "dash-bootstrap-components",
-        "plotly", "pandas"
+        "pytest", "pytest-mock", "pytest-cov", "pytest-dash"
     ]
     
     missing_packages = []
@@ -48,31 +47,33 @@ def check_dependencies():
             logger.info("Please install them manually using: pip install -r requirements.txt")
             sys.exit(1)
 
-def run_dashboard():
-    """Run the Neural Child Dashboard."""
-    logger.info("Starting Neural Child Dashboard...")
+def run_tests():
+    """Run the Neural Child test suite."""
+    logger.info("Running Neural Child tests...")
     
-    # Get the absolute path to the dashboard script
-    dashboard_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "neural-child-dashboard.py"
-    )
+    # Get the project root directory
+    project_root = os.path.dirname(os.path.abspath(__file__))
     
-    logger.info(f"Dashboard path: {dashboard_path}")
+    # Change to the project root directory
+    os.chdir(project_root)
     
+    # Run pytest with coverage
     try:
-        # Run the dashboard script
-        subprocess.run([sys.executable, dashboard_path], check=True)
+        subprocess.run([
+            sys.executable, "-m", "pytest",
+            "--cov=mind", "--cov=mother", "--cov=core", "--cov=communication",
+            "-v"
+        ], check=True)
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error running dashboard: {e}")
+        logger.error(f"Tests failed with error: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
-        logger.info("Dashboard stopped by user.")
+        logger.info("Tests stopped by user.")
     
 if __name__ == "__main__":
     # Check if all required packages are installed
     logger.info("Checking required packages...")
     check_dependencies()
     
-    # Run the dashboard
-    run_dashboard()
+    # Run the tests
+    run_tests() 

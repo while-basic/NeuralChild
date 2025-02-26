@@ -10,7 +10,7 @@ from datetime import datetime
 import time
 import threading
 import queue
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 import logging
 from core.schemas import NetworkMessage, DevelopmentalStage
 
@@ -27,12 +27,12 @@ class MessageFilter(BaseModel):
         default=None, description="Maximum developmental stage (inclusive)"
     )
     
-    @root_validator(skip_on_failure=True)
-    def validate_filter(cls, values):
+    @model_validator(mode='after')
+    def validate_filter(self) -> 'MessageFilter':
         """Validate that at least one filter criterion is specified."""
-        if not any(values.get(field) is not None for field in ["sender", "receiver", "message_type", "min_priority", "max_developmental_stage"]):
+        if not any(getattr(self, field) is not None for field in ["sender", "receiver", "message_type", "min_priority", "max_developmental_stage"]):
             raise ValueError("At least one filter criterion must be specified")
-        return values
+        return self
 
 class SubscriptionInfo(BaseModel):
     """Information about a message subscription."""
@@ -41,8 +41,7 @@ class SubscriptionInfo(BaseModel):
     callback: Optional[Any] = Field(default=None, description="Callback function or method")
     queue_name: Optional[str] = Field(default=None, description="Name of queue if using queue-based delivery")
     
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 class MessageBus:
     """

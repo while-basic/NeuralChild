@@ -15,7 +15,7 @@ import os
 import logging
 import copy
 import json
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.schemas import NetworkState, NetworkMessage, VectorOutput, TextOutput, DevelopmentalStage
 
@@ -31,10 +31,10 @@ class GrowthMetrics(BaseModel):
     integration: float = Field(default=0.1, ge=0.0, le=1.0, description="Degree of integration with other networks")
     adaptability: float = Field(default=0.5, ge=0.0, le=1.0, description="Ability to adapt to new inputs")
     
-    @validator('connection_density', 'plasticity', 'pruning_rate', 'specialization', 'integration', 'adaptability')
-    def check_range(cls, v, values, **kwargs):
+    @field_validator('connection_density', 'plasticity', 'pruning_rate', 'specialization', 'integration', 'adaptability')
+    def check_range(cls, v, info):
         """Ensure values are within range."""
-        field_name = kwargs['field'].name
+        field_name = info.field_name
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"{field_name} must be between 0.0 and 1.0")
         return v
